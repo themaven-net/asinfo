@@ -2034,7 +2034,7 @@ class RunCommand(cmd.Cmd):
 		bold = "\'"
 		reset = "\'"
 		
-	_VERSION_ = "3.5.11"
+	_VERSION_ = "3.6.1"
 	prompt = "Monitor> "
 	name = "Aerospike Interactive Shell"
 	known_histnames = ['reads', 'writes_master', 'proxy', 'writes_reply', 'udf', 'query']	
