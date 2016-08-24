@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 
-# Copyright 2013-2014 Aerospike, Inc.
+# Copyright 2013-2016 Aerospike, Inc.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -18,11 +18,13 @@
 
 
 __author__ = "Aerospike"
-__copyright__ = "Copyright 2013 Aerospike"
-__version__ = "1.4.2"
+__copyright__ = "Copyright 2016 Aerospike"
+__version__ = "1.5.3"
 
 # Modules
 import argparse
+import getpass
+import re
 import sys
 import time
 import socket
@@ -201,17 +203,17 @@ class Daemon:
 ####
 # Usage :
 # ## To send just the latency information to Graphite
-# python citrusleaf_graphite.py -l 'latency:back=70;duration=60' --start -g s1 -p 2023
+# python asgraphite.py -l 'latency:back=70;duration=60' --start -g s1 -p 2023
 # ## To send just 1 namespace stats to Graphite, for multiple namespaces, start accordingly
-# python citrusleaf_graphite.py -n --start -g s1 -p 2023
+# python asgraphite.py -n --start -g s1 -p 2023
 # ## To send just the statistics information to Graphite
-# python citrusleaf_graphite.py --start -g s1 -p 2023
+# python asgraphite.py --start -g s1 -p 2023
 # ## To send sets info to Graphite
-# python citrusleaf_graphite.py -s --start -g s1 -p 2023
-# ## To send XDR statistics to Graphite
-# python citrusleaf_graphite.py -x --start -g s1 -p 2023
+# python asgraphite.py -s --start -g s1 -p 2023
+# ## To send XDR DC statistics to Graphite
+# python asgraphite.py -x --start -g s1 -p 2023
 # ## To Stop the Daemon
-#  python citrusleaf_graphite.py --stop
+#  python asgraphite.py --stop
 ####
 
 parser = argparse.ArgumentParser()
@@ -240,6 +242,11 @@ parser.add_argument("--restart"
 					, action="store_true"
 					, dest="restart"
 					, help="Restart the Daemon")
+parser.add_argument("-v"
+					, "--verbose"
+					, action="store_true"
+					, dest="verbose"
+					, help="Enable verbose logging")
 
 parser.add_argument("-n"
 					, "--namespace"
@@ -260,38 +267,31 @@ parser.add_argument("-l"
 
 parser.add_argument("-x"
 					, "--xdr"
-					, action="store_true"
-					, dest="xdr"
-					, help="Gather XDR statistics")
+					, nargs='+'
+					, action='append'
+					, dest="dc"
+					, help="Gather XDR datacenter statistics")
 
 parser.add_argument("-g"
 					, "--graphite"
 					, dest="graphite_server"
-					, required=True
 					, help="REQUIRED: IP for Graphite server")
 
 parser.add_argument("-p"
 					, "--graphite-port"
 					, dest="graphite_port"
-					, required=True
 					, help="REQUIRED: PORT for Graphite server")
 
 parser.add_argument("--prefix"
 					, dest="graphite_prefix"
-					, default='instances.citrusleaf.'
-                                        , help="Prefix used when sending metrics to Graphite server (default: %(default)s)")
+					, default='instances.aerospike.'
+					, help="Prefix used when sending metrics to Graphite server (default: %(default)s)")
 
 parser.add_argument("-i"
 					, "--info-port"
 					, dest="info_port"
 					, default=3000
 					, help="PORT for Aerospike server (default: %(default)s)")
-
-parser.add_argument("-r"
-					, "--xdr-port"
-					, dest="xdr_port"
-					, default=3004
-					, help="PORT for XDR server(default: %(default)s)")
 
 parser.add_argument("-b"
 					, "--base-node"
@@ -305,7 +305,7 @@ parser.add_argument("-f"
 					, default='/var/log/aerospike/asgraphite.log'
 					, help="Logfile for asgraphite (default: %(default)s)")
 
-parser.add_argument("-d"
+parser.add_argument("-si"
 					, "--sindex"
 					, action="store_true"
 					, dest="sindex"
@@ -314,19 +314,19 @@ parser.add_argument("-d"
 args = parser.parse_args()
 
 try:
-	import citrusleaf
+	import aerospike
 except:
-	raise Exception, "unable to load Citrusleaf/Aerospike library"
+	raise Exception, "unable to load Aerospike/Aerospike library"
 	sys.exit(-1)
 
 user = None
 password = None
 
 if args.user != None:
-	user = args.User
+	user = args.user
 	if args.password == "prompt":
 		args.password = getpass.getpass("Enter Password:")
-	password = citrusleaf.hashpassword(args.password)
+	password = args.password
 
 # Configurable parameters
 LOGFILE = args.log_file
@@ -336,19 +336,19 @@ if not args.stop:
 		GRAPHITE_SERVER = args.graphite_server
 	else:
 		parser.print_help()
-		sys.exit(2)
+		sys.exit(200)
 
 	if args.graphite_port:
 		GRAPHITE_PORT = int(args.graphite_port)
 	else:
 		parser.print_help()
-		sys.exit(2)
+		sys.exit(3)
 
-CITRUSLEAF_SERVER = args.base_node
-CITRUSLEAF_PORT = args.info_port
-CITRUSLEAF_XDR_PORT = args.xdr_port
-CITRUSLEAF_SERVER_ID = socket.gethostname()
-GRAPHITE_PATH_PREFIX = args.graphite_prefix + CITRUSLEAF_SERVER_ID
+AEROSPIKE_SERVER = args.base_node
+AEROSPIKE_PORT = args.info_port
+AEROSPIKE_SERVER_ID = socket.gethostname()
+AEROSPIKE_XDR_DCS = args.dc
+GRAPHITE_PATH_PREFIX = args.graphite_prefix + AEROSPIKE_SERVER_ID
 INTERVAL = 30
 
 class clGraphiteDaemon(Daemon):
@@ -367,14 +367,22 @@ class clGraphiteDaemon(Daemon):
 		return s
 
 	def run(self):
+		print "Starting asgraphite daemon" , time.asctime(time.localtime())
 		s = self.connect()
 		print "Aerospike-Graphite connector started: ", time.asctime(time.localtime())
-
+		config = { 'hosts' : [ (AEROSPIKE_SERVER, AEROSPIKE_PORT) ] }
 		while True:
 			msg = []
 			now = int(time.time())
-			r = citrusleaf.citrusleaf_info(CITRUSLEAF_SERVER, CITRUSLEAF_PORT, 'statistics', user, password)
+			try:
+				client = aerospike.client(config).connect(user,password)
+			except:
+				print "Unable to connect to aerospike"
+				time.sleep(INTERVAL)
+				continue
+			r = client.info_node('statistics',(AEROSPIKE_SERVER,AEROSPIKE_PORT))
 			if (-1 != r):
+				r = r.split('\t')[1]
 				lines = []
 				for string in r.split(';'):
 					if string == "":
@@ -392,45 +400,51 @@ class clGraphiteDaemon(Daemon):
 			if args.sets:
 				r = -1
 				try:
-					r = citrusleaf.citrusleaf_info(CITRUSLEAF_SERVER, CITRUSLEAF_PORT, 'sets', user, password)
+					r = client.info_node('sets',(AEROSPIKE_SERVER,AEROSPIKE_PORT))
 				except:
 					pass
 				if (-1 != r):
+					r = r.split('\t')[1].strip()
 					lines = []
 					for string in r.split(';'):
 						if len(string) == 0:
 							continue
 						setList = string.split(':')
-						namespace = setList[0]
-						sets = setList[1]
+						namespace = setList[0].split('=')
+						sets = setList[1].split('=')
 						for set_tuple in setList[2:]:
 							key, value = set_tuple.split('=')
-							lines.append("%s.sets.%s.%s.%s %s %s" % (GRAPHITE_PATH_PREFIX, namespace, sets, key, value, now))
+							lines.append("%s.sets.%s.%s.%s %s %s" % (GRAPHITE_PATH_PREFIX, namespace[1], sets[1], key, value, now))
 					msg.extend(lines)
 
 			if args.latency:
 				r = -1
 				if args.latency.startswith('latency:'):
 					try:
-						r = citrusleaf.citrusleaf_info(CITRUSLEAF_SERVER, CITRUSLEAF_PORT, args.latency, user, password)
+						r = client.info_node(args.latency,(AEROSPIKE_SERVER,AEROSPIKE_PORT))
 					except:
 						pass
 				else:
 					try:
-						r = citrusleaf.citrusleaf_info(CITRUSLEAF_SERVER, CITRUSLEAF_PORT, 'latency:', user, password)
+						r = client.info_node('latency:',(AEROSPIKE_SERVER,AEROSPIKE_PORT))
 					except:
 						pass
 
 				if (-1 != r) and not (r.startswith('error')):
+					r = r.split('\t')[1].strip()
 					lines = []
 					latency_type = ""
 					header = []
 					for string in r.split(';'):
-						if len(string) == 0:
+						if len(string) == 0 or string.startswith("error"):
 							continue
 						if len(latency_type) == 0:
 							# Base case
 							latency_type, rest = string.split(':', 1)
+							# handle dynamic naming
+							match = re.match('{(.*)}',latency_type)
+							latency_type = re.sub('{.*}-','',latency_type)
+							latency_type = match.groups()[0]+'.'+latency_type
 							header = rest.split(',')
 						else:
 							val = string.split(',')
@@ -448,20 +462,22 @@ class clGraphiteDaemon(Daemon):
 			if args.namespace:
 				r = -1
 				try:
-					r = citrusleaf.citrusleaf_info(CITRUSLEAF_SERVER, CITRUSLEAF_PORT, 'namespaces', user, password)
+					r = client.info_node('namespaces',(AEROSPIKE_SERVER,AEROSPIKE_PORT))
 				except:
 					pass
 
 				if (-1 != r):
+					r = r.split('\t')[1].strip()
 					namespaces = filter(None, r.split(';'))
 					if len(namespaces) > 0:
 						for namespace in namespaces:
 							r = -1
 							try:
-								r = citrusleaf.citrusleaf_info(CITRUSLEAF_SERVER, CITRUSLEAF_PORT, 'namespace/' + namespace, user, password)
+								r = client.info_node('namespace/' + namespace ,(AEROSPIKE_SERVER,AEROSPIKE_PORT))
 							except:
 								pass
 							if (-1 != r):
+								r = r.split('\t')[1].strip()
 								lines = []
 								for string in r.split(';'):
 									name, value = string.split('=')
@@ -470,26 +486,34 @@ class clGraphiteDaemon(Daemon):
 									lines.append(GRAPHITE_PATH_PREFIX + "." + namespace + ".%s %s %s" % (name, value, now))
 							msg.extend(lines)
 
-			if args.xdr:
+			if args.dc:
 				r = -1
-				try:
-					r = citrusleaf.citrusleaf_info(CITRUSLEAF_SERVER, CITRUSLEAF_XDR_PORT, 'statistics', user, password)
-				except:
-					pass
-				if (-1 != r):
-					lines = []
-					for string in r.split(';'):
-						if string == "":
-							continue
+				# Flatten the list
+				DCS = [ item for sublist in AEROSPIKE_XDR_DCS for item in sublist]
+				for DC in DCS:
+					try:
+						r = client.info_node('dc/' + DC ,(AEROSPIKE_SERVER,AEROSPIKE_PORT))
+					except:
+						pass
+					if (-1 != r):
+						r = r.split('\t')[1].strip()
+						lines = []
+						for string in r.split(';'):
+							if string == "":
+								continue
 
-						if string.count('=') > 1:
-							continue
+							if string.count('=') > 1:
+								continue
 
-						name, value = string.split('=')
-						value = value.replace('false', "0")
-						value = value.replace('true', "1")
-						lines.append("%s.xdr.%s %s %s" % (GRAPHITE_PATH_PREFIX, name, value, now))
-					msg.extend(lines)
+							name, value = string.split('=')
+							value = value.replace('false', "0")
+							value = value.replace('true', "1")
+							value = value.replace('INACTIVE',"0")
+							value = value.replace('CLUSTER_DOWN',"1")
+							value = value.replace('CLUSTER_UP',"2")
+							value = value.replace('WINDOW_SHIPPER',"3")
+							lines.append("%s.xdr.%s.%s %s %s" % (GRAPHITE_PATH_PREFIX, DC, name, value, now))
+						msg.extend(lines)
 
 ##	Logic to export SIndex Stats to Graphite
 ##	Since Graphite understands numbers we have used substitutes as below
@@ -501,10 +525,11 @@ class clGraphiteDaemon(Daemon):
 			if args.sindex:
 				r = -1
 				try:
-					r = citrusleaf.citrusleaf_info(CITRUSLEAF_SERVER, CITRUSLEAF_PORT, 'sindex', user, password)
+					r = client.info_node('sindex',(AEROSPIKE_SERVER,AEROSPIKE_PORT))
 				except:
 					pass
 				if (-1 != r):
+					r = r.split('\t')[1].strip()
 					indexes = filter(None, r)
 					if len(indexes) > 0:
 						lines = []
@@ -527,10 +552,11 @@ class clGraphiteDaemon(Daemon):
 
 								r = -1
 								try:
-									r = citrusleaf.citrusleaf_info(CITRUSLEAF_SERVER, CITRUSLEAF_PORT, 'sindex/' + index["ns"] + '/' + index["indexname"], user, password)
+									r = client.info_node('sindex/' + index["ns"] + '/' + index["indexname"],(AEROSPIKE_SERVER,AEROSPIKE_PORT))
 								except:
 									pass
 								if (-1 != r):
+									r = r.split('\t')[1].strip()
 									for string in r.split(';'):
 										name, value = string.split('=')
 										value = value.replace('false', "0")
@@ -569,6 +595,8 @@ class clGraphiteDaemon(Daemon):
 					line += f + ' '
 				nmsg += line + '\n'
 			try:
+				if args.verbose:
+					print nmsg
 				s.sendall(nmsg)
 			except:
 				#Once the connection is broken, we need to reconnect
@@ -576,7 +604,7 @@ class clGraphiteDaemon(Daemon):
 				sys.stdout.flush()
 				s.close()
 				s = self.connect()
-
+			client.close()
 			time.sleep(INTERVAL)
 
 if __name__ == "__main__":
@@ -591,8 +619,8 @@ if __name__ == "__main__":
 			daemon.restart()
 		else:
 			print "Unknown command"
-			sys.exit(2)
+			sys.exit(20)
 		sys.exit(0)
 	else:
 		parser.print_help()
-		sys.exit(2)
+		sys.exit(22)
