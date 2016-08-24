@@ -1,7 +1,7 @@
 #!/usr/bin/python
 ####
 #
-#  Copyright (c) 2008-2012 Aerospike, Inc. All rights reserved.
+#  Copyright (c) 2008-2016 Aerospike, Inc. All rights reserved.
 #
 # Permission is hereby granted, free of charge, to any person obtaining a copy of
 # this software and associated documentation files (the "Software"), to deal in
@@ -67,6 +67,9 @@ DT_FMT = "%b %d %Y %H:%M:%S"
 DT_TO_MINUTE_FMT = "%b %d %Y %H:%M"
 DT_TIME_FMT = "%H:%M:%S"
 HIST_TAG_PREFIX = "histogram dump: "
+HIST_TAG_PATTERNS = [HIST_TAG_PREFIX+"%s ",HIST_TAG_PREFIX+"{[a-zA-Z0-9_-]+}-%s "]
+NS_HIST_TAG_PATTERNS = [HIST_TAG_PREFIX+"{%s}-%s "]
+NS_SLICE_SECONDS=5
 SCAN_SIZE = 1024 * 1024
 
 
@@ -171,6 +174,17 @@ def subtract_buckets(new_values, old_values):
 	return slice_values
 
 #------------------------------------------------
+# Add one set of bucket values to another.
+#
+
+
+def add_buckets(b1_values, b2_values):
+	slice_values = {}
+	for b in range(ALL_BUCKETS):
+		slice_values[b] = b1_values[b] + b2_values[b]
+	return slice_values
+
+#------------------------------------------------
 # Get the percentage of operations within every bucket.
 #
 def bucket_percentages(total, values):
@@ -194,33 +208,39 @@ def percentage_over(bucket, percentages):
 # Parse a datetime from a log line.
 #
 def parse_dt(line):
-	prefix = line[0: line.find(" GMT:")]
+	prefix = line[0: line.find(" GMT")]
 	return datetime.datetime(*(time.strptime(prefix, DT_FMT)[0:6]))
 
 #------------------------------------------------
 # Get a histogram at or just after the specified datetime.
 #
-def read_hist(hist_tag, after_dt, file_id, line = 0):
-	prefix_to_minute = after_dt.strftime(DT_TO_MINUTE_FMT)
+def read_hist(hist_tags, after_dt, file_id, line = 0, end_dt=None, before_dt=None):
 	if not line:
 		line = read_line(file_id)		
 	while True:
 		if not line:
 			return 0, 0, 0, 0
-		if line.startswith(prefix_to_minute):
+		dt = parse_dt(line)
+		if dt<after_dt:
+			line = read_line(file_id)
+			continue
+		if end_dt and dt>end_dt:
+			return 0, 0, dt, line
+		if before_dt and dt>before_dt:
+			return 0, 0, dt, line
+		if any(re.search(ht, line) for ht in hist_tags):
 			break
 		line = read_line(file_id)
-	while True:
-		if hist_tag in line:
-			dt = parse_dt(line)
-			if dt >= after_dt:
-				break
-		line = read_line(file_id)
-		if not line:
-			return 0, 0, 0, 0
+
 	total, values, line = read_bucket_values(line, file_id)
 	if not line:
 		return 0, 0, 0, 0
+	if not before_dt:
+		before_dt = dt+datetime.timedelta(seconds=NS_SLICE_SECONDS)
+	r_total, r_values, r_dt, line = read_hist(hist_tags,after_dt,file_id,line,end_dt,before_dt)
+	total += r_total
+	if r_values:
+		values = add_buckets(values, r_values)
 	return total, values, dt, line
 
 #------------------------------------------------
@@ -365,6 +385,9 @@ def usage():
 	print " -h histogram name"
 	print "    MANDATORY - NO DEFAULT"
 	print "    e.g. 'reads nonet'"
+	print " -N namespace name. It will display histogram latency for input namespace"
+	print "    default: not set (displays aggregate latency for all namespaces)"
+	print "    e.g. 'test'"
 	print " -t analysis slice interval"
 	print "    default: 10"
 	print "    other e.g. 3600 or 1:00:00"
@@ -385,7 +408,7 @@ def usage():
 # Main function.
 #
 def main(arg_log, arg_hist, arg_slice, arg_from, arg_duration, \
-		arg_num_buckets, arg_every_nth):
+		arg_num_buckets, arg_every_nth, arg_ns=None):
 	global g_rolling
 
 	# Sanity-check some arguments:
@@ -422,7 +445,11 @@ def main(arg_log, arg_hist, arg_slice, arg_from, arg_duration, \
 		sys.exit(-1)
 
 	# Set histogram tag:
-	hist_tag = HIST_TAG_PREFIX + arg_hist + " "
+	# hist_tag = HIST_TAG_PREFIX + arg_hist + " "
+	if arg_ns:
+		hist_tags = [s%(arg_ns,arg_hist) for s in NS_HIST_TAG_PATTERNS]
+	else:
+		hist_tags = [s%(arg_hist) for s in HIST_TAG_PATTERNS]
 
 	# After this point we may need user input to stop:
 	if arg_from == "tail":
@@ -439,7 +466,10 @@ def main(arg_log, arg_hist, arg_slice, arg_from, arg_duration, \
 		signal.signal(signal.SIGINT, signal_handler)
 
 	# Print first line of output table header to let user know we're live:
-	print arg_hist
+	if arg_ns:
+		print "{%s}-%s"%(arg_ns, arg_hist)
+	else:
+		print arg_hist
 
 	# Find datetime at which to start, and seek to starting point:
 	head_dt = read_head_dt(file_id)
@@ -461,7 +491,7 @@ def main(arg_log, arg_hist, arg_slice, arg_from, arg_duration, \
 
 	# Find first histogram:
 	old_total, old_values, old_dt, line = \
-		read_hist(hist_tag, init_dt, file_id)
+		read_hist(hist_tags, init_dt, file_id)
 	if not line:
 		print "can't find histogram " + arg_hist + \
 			" from start time " + arg_from
@@ -505,9 +535,9 @@ def main(arg_log, arg_hist, arg_slice, arg_from, arg_duration, \
 	# Process all the time slices:
 	while arg_duration == None or end_dt > old_dt:
 		new_total, new_values, new_dt, line = \
-			read_hist(hist_tag, after_dt, file_id, line)
-		if not line:
-			# Note - we ignore the (possible) incomplete slice at the end.
+			read_hist(hist_tags, after_dt, file_id, line)
+		if not new_values:
+			# This can happen in either eof or end of input time range
 			break
 
 		# Get the "deltas" for this slice:
@@ -566,9 +596,9 @@ def main(arg_log, arg_hist, arg_slice, arg_from, arg_duration, \
 #
 
 try:
-	opts, args = getopt.getopt(sys.argv[1:], "l:h:t:f:d:n:e:r", \
+	opts, args = getopt.getopt(sys.argv[1:], "l:h:t:f:d:n:e:N:r", \
 		["log=", "histogram=", "slice=", "from", "duration", \
-		 "num_buckets=", "every_nth=", "rolling"])
+		 "num_buckets=", "every_nth=", "rolling", "namespace="])
 except getopt.GetoptError, err:
 	print str(err)
 	usage()
@@ -588,6 +618,7 @@ arg_from = "tail"
 arg_duration = None
 arg_num_buckets = 3
 arg_every_nth = 3
+arg_ns = None
 
 # Set the arguments:
 for o, a in opts:
@@ -607,7 +638,9 @@ for o, a in opts:
 		arg_every_nth = int(a)
 	if o == "-r" or o == "--rolling":
 		g_rolling = True
+	if o == "-N" or o == "--namespace":
+		arg_ns = a
 
 # Call main():
 main(arg_log, arg_hist, arg_slice, arg_from, arg_duration, \
-	arg_num_buckets, arg_every_nth)
+	arg_num_buckets, arg_every_nth, arg_ns)
