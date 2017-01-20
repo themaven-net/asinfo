@@ -607,7 +607,13 @@ except getopt.GetoptError, err:
 try:
 	import citrusleaf
 	log_location = citrusleaf.citrusleaf_info('127.0.0.1','3000','logs')
-	arg_log = log_location.split(":")[1]
+	log_sinks = log_location.split(";")
+
+	for sink in log_sinks:
+		# Get the first sink that appears to be a path to a file.
+		if "/" in sink:
+			arg_log = sink.split(":")[1]
+			break;
 except:
 	arg_log = "/var/log/aerospike/aerospike.log"
 
