@@ -28,70 +28,86 @@
 #
 #
 
-import sys
-import time
-import types
 import argparse
-import getpass
-
-try:
-	import citrusleaf
-except:
-	print "citrusleaf.py not in your python path. Set PYTHONPATH!"
-	sys.exit(-1)
+from subprocess import Popen, PIPE
 
 parser = argparse.ArgumentParser(add_help=False)
 parser.add_argument("-h", "--host", default="127.0.0.1", help="server host name (default: %(default)s)")
 parser.add_argument("-p", "--port", type=int, default=3000, help="server port (default: %(default)s)")
+parser.add_argument("-t", "--tls_name", dest="tls_name"
+                    , help="TLS name of host to verify for TLS connection. It is required if tls_enable is set.")
 parser.add_argument("-U", "--user", help="user name")
 parser.add_argument("-P", "--password", nargs="?", const="prompt", help="password")
 parser.add_argument("-v", "--value", help="fetch single value (default all)")
 parser.add_argument("-l", "--lineseperator", action="store_true", default=False, help="print in seperate lines (default: %(default)s)")
 parser.add_argument("-u", "--usage", action='help', help="show program usage")
-parser.add_argument("-d", "--debug", action='store_true', help="Print extra debug information")
+parser.add_argument("--tls_enable", dest="tls_enable", action="store_true", help="Enable TLS on connections. By default TLS is disabled.")
+parser.add_argument("--tls_encrypt_only", dest="tls_encrypt_only", action="store_true"
+                    , help="Enable mode to do only encryption, so connections won't verify certificates.")
+parser.add_argument("--tls_cafile", dest="tls_cafile", help="Path to a trusted CA certificate file.")
+parser.add_argument("--tls_capath", dest="tls_capath", help="Path to a directory of trusted CA certificates.")
+parser.add_argument("--tls_protocols", dest="tls_protocols"
+                    , help="Set the TLS protocol selection criteria. This format is the same as Apache's SSLProtocol documented "
+                            "at https://httpd.apache.org/docs/current/mod/mod_ssl.html#sslprotocol"
+                            "If not specified the asinfo will use '-all +TLSv1.2' if has support for TLSv1.2,"
+                            "otherwise it will be '-all +TLSv1'.")
+parser.add_argument("--tls_cipher_suite", dest="tls_cipher_suite"
+                    , help="Set the TLS cipher selection criteria. The format is the same as OpenSSL's Cipher List Format documented "
+                            "at https://www.openssl.org/docs/man1.0.1/apps/ciphers.html")
+parser.add_argument("--tls_keyfile", dest="tls_keyfile"
+                    , help="Path to the key for mutual authentication (if Aerospike Cluster is supporting it).")
+parser.add_argument("--tls_certfile", dest="tls_certfile"
+                    , help="Path to the chain file for mutual authentication (if Aerospike Cluster is supporting it).")
+parser.add_argument("--tls_cert_blacklist", dest="tls_cert_blacklist"
+                    , help="Path to a certificate blacklist file. The file should contain one line for each blacklisted certificate entry. "
+                            "Each line starts with the certificate serial number expressed in hex. "
+                            "Each entry may optionally specify the issuer name of the "
+                            "certificate (serial numbers are only required to be unique per issuer)."
+                            "Example: "
+                            "867EC87482B2 /C=US/ST=CA/O=Acme/OU=Engineering/CN=TestChainCA")
+parser.add_argument("--tls_crl_check", dest="tls_crl_check", action="store_true"
+                    , help="Enable CRL checking for leaf certificate. An error occurs if a valid CRL files cannot be found in tls_capath.")
+parser.add_argument("--tls_crl_check_all", dest="tls_crl_check_all", action="store_true"
+                    , help="Enable CRL checking for entire certificate chain. An error occurs if a valid CRL files cannot be found in tls_capath.")
 args = parser.parse_args()
 
 if args.value == "stats":
 	args.value = "statistics"
 
-user = None
-password = None
+# asadm ( >= 0.1.6)
+cmd = "asadm"
+asinfo_cmd = "asinfo"
 
-if args.user != None:
-	user = args.user
-	if args.password == "prompt":
-		args.password = getpass.getpass("Enter Password:")
-	password = citrusleaf.hashpassword(args.password)
-
-#
-# MAINLINE
-#
-r = citrusleaf.citrusleaf_info(args.host, args.port, args.value, user, password)
-
-if r == -1:
-	print "request to ",args.host,":",args.port," returned error"
-	sys.exit(0)
-
-if r == None:
-	print "request to ",args.host,":",args.port," returned no data"
-	sys.exit(0)
-
-if type(r) == types.StringType:
-	if args.debug:
-		print "requested value",args.value
-
-	if args.lineseperator:
-		r = r.replace(';', '\n')
-
-	if args.debug:
-		print "value is",r
+for arg, val in args.__dict__.iteritems():
+	if arg == "value":
+		if val:
+			asinfo_cmd += " -v " + str(val)
+	elif arg == "lineseperator":
+		if val:
+			asinfo_cmd += " -l "
 	else:
-		print r
-else:
-	# it better be a dict then
-	i = 1
-	for name, value in r.iteritems():
-		print i,": ",name
-		print "    ",value
-		i += 1
+		if val is not None and val is not False:
+			# If not a default values then only pass to asadm.
+			cmd += " --%s " %(str(arg))
+			if val is not True:
+				# If not enable/disable argument then pass value also.
+				# Some values may have space in it, to make it correct we need quotes.
+				cmd += " \"%s\" " %(val)
 
+# asinfo works with only single node (seed node)
+cmd += " --single_node_cluster"
+
+# asinfo output doesn't require to print node name in it
+asinfo_cmd += " --no_node_name"
+
+# final asadm command
+cmd += " -e \"%s\""%(asinfo_cmd)
+
+p = Popen(cmd, shell=True, stdout=PIPE, stderr=PIPE)
+out, err = p.communicate()
+if err:
+	print str(err)
+	print
+	print "asinfo requires asadm (>= 0.1.6), please check asadm version."
+else:
+	print out.strip()
