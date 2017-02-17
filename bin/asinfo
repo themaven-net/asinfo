@@ -81,7 +81,7 @@ asinfo_cmd = "asinfo"
 for arg, val in args.__dict__.iteritems():
 	if arg == "value":
 		if val:
-			asinfo_cmd += " -v " + str(val)
+			asinfo_cmd += " -v \'%s\'"%(str(val))
 	elif arg == "lineseperator":
 		if val:
 			asinfo_cmd += " -l "
@@ -108,6 +108,16 @@ out, err = p.communicate()
 if err:
 	print str(err)
 	print
-	print "asinfo requires asadm (>= 0.1.6), please check asadm version."
+	print "asinfo requires asadm (>= 0.1.7), please check asadm version."
+	exit(1)
 else:
+	asadm_error_msgs = ["Not able to connect any cluster", "Invalid command or Could not connect to node"]
+	if  any (m in str(out.strip()) for m in asadm_error_msgs):
+		print "request to ",args.host,":",args.port," returned error"
+		exit(0)
+
+	if p.returncode:
+		print "request to ",args.host,":",args.port," returned error"
+		exit(0)
+
 	print out.strip()

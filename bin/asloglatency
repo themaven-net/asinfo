@@ -60,9 +60,6 @@ import types
 # Constants
 #
 
-BUCKET_LABELS = ("00", "01", "02", "03", "04", "05", "06", "07", "08", "09", \
-	"10", "11", "12", "13", "14", "15", "16")
-ALL_BUCKETS = len(BUCKET_LABELS)
 DT_FMT = "%b %d %Y %H:%M:%S"
 DT_TO_MINUTE_FMT = "%b %d %Y %H:%M"
 DT_TIME_FMT = "%H:%M:%S"
@@ -71,14 +68,18 @@ HIST_TAG_PATTERNS = [HIST_TAG_PREFIX+"%s ",HIST_TAG_PREFIX+"{[a-zA-Z0-9_-]+}-%s 
 NS_HIST_TAG_PATTERNS = [HIST_TAG_PREFIX+"{%s}-%s "]
 NS_SLICE_SECONDS=5
 SCAN_SIZE = 1024 * 1024
-
-
+HIST_BUCKET_LINE_SUBSTRING = "hist.c:"
+SIZE_HIST_LIST = ["device-read-size", "device-write-size"]
+RECORD_HIST_LIST = ["query-rec-count"]
 #===========================================================
 # Globals
 #
 
 g_rolling = False
-
+bucket_labels = ("00", "01", "02", "03", "04", "05", "06", "07", "08", "09", \
+	"10", "11", "12", "13", "14", "15", "16")
+all_buckets = len(bucket_labels)
+bucket_unit = "ms"
 
 #===========================================================
 # Function Definitions
@@ -115,13 +116,31 @@ def signal_handler(signal, frame):
 	g_rolling = False
 
 #------------------------------------------------
+# Check line contains valid date format
+#
+def has_timestamp(line):
+	try:
+		dt = parse_dt(line)
+		return True
+	except Exception:
+		return False
+
+#------------------------------------------------
 # Read a complete line from the log file.
 #
 def read_line(file_id):
 	global g_rolling
 	line = ""
 	while True:
-		line = line + file_id.readline()
+		temp_line = file_id.readline()
+		if temp_line:
+			if line:
+				line = line + temp_line
+			else:
+				if has_timestamp(temp_line):
+					line = line + temp_line
+				else:
+					continue
 		if line.endswith("\n"):
 			return line
 		if not g_rolling:
@@ -135,30 +154,57 @@ def parse_total_ops(line, file_id):
 	return long(line[line.rfind("(") + 1: line.rfind(" total)")])
 
 #------------------------------------------------
+# Set bucket details.
+#
+def set_bucket_details(hist):
+	global bucket_labels, all_buckets, bucket_unit
+	if any(ht in hist for ht in SIZE_HIST_LIST):
+		bucket_labels = ("00", "01", "02", "03", "04", "05", "06", "07", "08", "09", \
+						"10", "11", "12", "13", "14", "15", "16", "17", "18", "19", "20", \
+						 "21", "22", "23", "24", "25")
+		all_buckets = len(bucket_labels)
+		bucket_unit = "bytes"
+	elif any(ht in hist for ht in RECORD_HIST_LIST):
+		bucket_labels = ("00", "01", "02", "03", "04", "05", "06", "07", "08", "09", \
+						"10", "11", "12", "13", "14", "15", "16", "17", "18", "19", "20", \
+						 "21", "22", "23", "24", "25")
+		all_buckets = len(bucket_labels)
+		bucket_unit = "records"
+#------------------------------------------------
 # Get one set of bucket values.
 #
 def read_bucket_values(line, file_id):
 	values = {}
-	for b in range(ALL_BUCKETS):
+	for b in range(all_buckets):
 		values[b] = 0
 	total = parse_total_ops(line, file_id)
 	line = read_line(file_id)
 	if not line:
 		return 0, 0, 0
 	b_min = 0
+	b_total = 0
 	while True:
 		found = 0
-		for b in range(b_min, ALL_BUCKETS):
-			pattern = '.*?\(' + BUCKET_LABELS[b] + ': (.*?)\).*?'
-			r = re.compile(pattern)
-			if r.search(line):
-				found = found + 1
-				values[b] = long(r.search(line).group(1))
-		if found == 0:
-			break
+		if HIST_BUCKET_LINE_SUBSTRING in line:
+			for b in range(b_min, all_buckets):
+				pattern = '.*?\(' + bucket_labels[b] + ': (.*?)\).*?'
+				r = re.compile(pattern)
+				if r.search(line):
+					found = found + 1
+					values[b] = long(r.search(line).group(1))
+					b_total = b_total + values[b]
+			if found == 0:
+				break
 		line = read_line(file_id)
 		if not line:
-			return 0, 0, 0
+			if b_total < total:
+				# Incomplete bucket details
+				return 0, 0, 0
+			else:
+				line = 0
+				break
+		if b_total >= total:
+			break
 		b_min = b_min + found
 	return total, values, line
 
@@ -167,7 +213,7 @@ def read_bucket_values(line, file_id):
 #
 def subtract_buckets(new_values, old_values):
 	slice_values = {}
-	for b in range(ALL_BUCKETS):
+	for b in range(all_buckets):
 		if new_values[b] < old_values[b]:
 			new_values[b] = old_values[b]
 		slice_values[b] = new_values[b] - old_values[b]
@@ -180,7 +226,7 @@ def subtract_buckets(new_values, old_values):
 
 def add_buckets(b1_values, b2_values):
 	slice_values = {}
-	for b in range(ALL_BUCKETS):
+	for b in range(all_buckets):
 		slice_values[b] = b1_values[b] + b2_values[b]
 	return slice_values
 
@@ -188,9 +234,9 @@ def add_buckets(b1_values, b2_values):
 # Get the percentage of operations within every bucket.
 #
 def bucket_percentages(total, values):
-	percentages = [0.0] * ALL_BUCKETS
+	percentages = [0.0] * all_buckets
 	if total > 0:
-		for b in range(ALL_BUCKETS):
+		for b in range(all_buckets):
 			percentages[b] = (float(values[b]) / total) * 100
 	return percentages
 
@@ -199,7 +245,7 @@ def bucket_percentages(total, values):
 #
 def percentage_over(bucket, percentages):
 	percentage = 0.0
-	for b in range(ALL_BUCKETS):
+	for b in range(all_buckets):
 		if b > bucket:
 			percentage = percentage + percentages[b]
 	return percentage
@@ -216,7 +262,7 @@ def parse_dt(line):
 #
 def read_hist(hist_tags, after_dt, file_id, line = 0, end_dt=None, before_dt=None):
 	if not line:
-		line = read_line(file_id)		
+		line = read_line(file_id)
 	while True:
 		if not line:
 			return 0, 0, 0, 0
@@ -372,7 +418,7 @@ def print_line(slice_tag, overs, num_buckets, every_nth, rate = 0, \
 	for i in range(num_buckets):
 		if i % every_nth == 0:
 			output = output + "%7.2f" % (overs[i])
-	output = output + "%9.1f" % (rate)
+	output = output + "%11.1f" % (rate)
 	print output
 
 #------------------------------------------------
@@ -428,8 +474,11 @@ def main(arg_log, arg_hist, arg_slice, arg_from, arg_duration, \
 		print "invalid slice time " + arg_slice
 		sys.exit(-1)
 
+	# Set buckets
+	set_bucket_details(arg_hist)
+
 	# Find index + 1 of last bucket to display:
-	for b in range(ALL_BUCKETS):
+	for b in range(all_buckets):
 		if b % arg_every_nth == 0:
 			max_bucket = b + 1
 			if arg_num_buckets == 1:
@@ -510,18 +559,18 @@ def main(arg_log, arg_hist, arg_slice, arg_from, arg_duration, \
 	# Print the output table header:
 	labels_prefix = "slice-to (sec)"
 	print old_dt.strftime(DT_FMT)
-	print repeat(" ", len(labels_prefix)) + " % > (ms)"
+	print repeat(" ", len(labels_prefix)) + " % > (" + bucket_unit +")"
 	labels = labels_prefix
 	for i in range(max_bucket):
 		if i % arg_every_nth == 0:
 			labels = labels + "%7s" % (pow(2, i))
-	labels = labels + "%9s" % "ops/sec"
+	labels = labels + "%11s" % "ops/sec"
 	print labels
 	underline = repeat("-", len(labels_prefix))
 	for i in range(max_bucket):
 		if i % arg_every_nth == 0:
 			underline = underline + " ------"
-	underline = underline + " --------"
+	underline = underline + " ----------"
 	print underline
 
 	# Other initialization before processing time slices:
