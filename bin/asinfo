@@ -29,6 +29,8 @@
 #
 
 import argparse
+import os
+import sys
 from subprocess import Popen, PIPE
 
 parser = argparse.ArgumentParser(add_help=False)
@@ -74,6 +76,9 @@ args = parser.parse_args()
 if args.value == "stats":
 	args.value = "statistics"
 
+# Add self path as first in $PATH to resolve asadm
+os.environ["PATH"] = sys.path[0] + ":" + os.getenv("PATH")
+
 # asadm ( >= 0.1.6)
 cmd = "asadm"
 asinfo_cmd = "asinfo"
@@ -110,14 +115,19 @@ if err:
 	print
 	print "asinfo requires asadm (>= 0.1.7), please check asadm version."
 	exit(1)
-else:
-	asadm_error_msgs = ["Not able to connect any cluster", "Invalid command or Could not connect to node"]
-	if  any (m in str(out.strip()) for m in asadm_error_msgs):
+elif out:
+	out = str(out).strip()
+
+	if  "Not able to connect any cluster" in out:
 		print "request to ",args.host,":",args.port," returned error"
-		exit(0)
+		exit(1)
+
+	if  "Error:" in out:
+		print str(out)
+		exit(1)
 
 	if p.returncode:
 		print "request to ",args.host,":",args.port," returned error"
-		exit(0)
+		exit(1)
 
 	print out.strip()
