@@ -79,17 +79,14 @@ if args.value == "stats":
 # Add self path as first in $PATH to resolve asadm
 os.environ["PATH"] = sys.path[0] + ":" + os.getenv("PATH")
 
-# asadm ( >= 0.1.6)
+# asadm ( >= 0.1.12)
 cmd = "asadm"
-asinfo_cmd = "asinfo"
+asinfo_cmd = ""
 
 for arg, val in args.__dict__.iteritems():
 	if arg == "value":
 		if val:
-			asinfo_cmd += " -v \'%s\'"%(str(val))
-	elif arg == "lineseperator":
-		if val:
-			asinfo_cmd += " -l "
+			asinfo_cmd += "\'%s\'"%(str(val))
 	else:
 		if val is not None and val is not False:
 			# If not a default values then only pass to asadm.
@@ -100,20 +97,18 @@ for arg, val in args.__dict__.iteritems():
 				cmd += " \"%s\" " %(val)
 
 # asinfo works with only single node (seed node)
-cmd += " --single_node_cluster"
-
-# asinfo output doesn't require to print node name in it
-asinfo_cmd += " --no_node_name"
+cmd += " --asinfo"
 
 # final asadm command
-cmd += " -e \"%s\""%(asinfo_cmd)
+if asinfo_cmd:
+	cmd += " -e \"%s\""%(asinfo_cmd)
 
 p = Popen(cmd, shell=True, stdout=PIPE, stderr=PIPE)
 out, err = p.communicate()
 if err:
 	print str(err)
 	print
-	print "asinfo requires asadm (>= 0.1.7), please check asadm version."
+	print "asinfo requires asadm (>= 0.1.12), please check asadm version."
 	exit(1)
 elif out:
 	out = str(out).strip()
@@ -122,7 +117,7 @@ elif out:
 		print "request to ",args.host,":",args.port," returned error"
 		exit(1)
 
-	if  "Error:" in out:
+	if  "error:" in out.lower():
 		print str(out)
 		exit(1)
 
