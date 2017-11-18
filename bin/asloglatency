@@ -64,6 +64,7 @@ DT_FMT = "%b %d %Y %H:%M:%S"
 DT_TO_MINUTE_FMT = "%b %d %Y %H:%M"
 DT_TIME_FMT = "%H:%M:%S"
 HIST_TAG_PREFIX = "histogram dump: "
+HIST_WITH_NS_PATTERN = "{.+}-[a-zA-Z0-9_-]+"
 HIST_TAG_PATTERNS = [HIST_TAG_PREFIX+"%s ",HIST_TAG_PREFIX+"{[a-zA-Z0-9_-]+}-%s "]
 NS_HIST_TAG_PATTERNS = [HIST_TAG_PREFIX+"{%s}-%s "]
 NS_SLICE_SECONDS=5
@@ -260,7 +261,7 @@ def parse_dt(line):
 #------------------------------------------------
 # Get a histogram at or just after the specified datetime.
 #
-def read_hist(hist_tags, after_dt, file_id, line = 0, end_dt=None, before_dt=None):
+def read_hist(hist_tags, after_dt, file_id, line = 0, end_dt=None, before_dt=None, read_all_dumps=False):
 	if not line:
 		line = read_line(file_id)
 	while True:
@@ -281,12 +282,15 @@ def read_hist(hist_tags, after_dt, file_id, line = 0, end_dt=None, before_dt=Non
 	total, values, line = read_bucket_values(line, file_id)
 	if not line:
 		return 0, 0, 0, 0
-	if not before_dt:
-		before_dt = dt+datetime.timedelta(seconds=NS_SLICE_SECONDS)
-	r_total, r_values, r_dt, line = read_hist(hist_tags,after_dt,file_id,line,end_dt,before_dt)
-	total += r_total
-	if r_values:
-		values = add_buckets(values, r_values)
+
+	if read_all_dumps:
+		if not before_dt:
+			before_dt = dt+datetime.timedelta(seconds=NS_SLICE_SECONDS)
+		r_total, r_values, r_dt, line = read_hist(hist_tags, after_dt, file_id, line,end_dt, before_dt, read_all_dumps=read_all_dumps)
+		total += r_total
+		if r_values:
+			values = add_buckets(values, r_values)
+
 	return total, values, dt, line
 
 #------------------------------------------------
@@ -493,12 +497,27 @@ def main(arg_log, arg_hist, arg_slice, arg_from, arg_duration, \
 		print "log file " + arg_log + " not found."
 		sys.exit(-1)
 
+	# By default reading one bucket dump for 10 second slice,
+	# In case of multiple namespaces, it will read all bucket dumps for all namepspaces for same slice
+	read_all_dumps = False
+
 	# Set histogram tag:
 	# hist_tag = HIST_TAG_PREFIX + arg_hist + " "
 	if arg_ns:
+		# Analysing latency for histogram arg_hist for specific namespace arg_ns
+		# It needs to read single bucket dump for a slice
 		hist_tags = [s%(arg_ns,arg_hist) for s in NS_HIST_TAG_PATTERNS]
+
+	elif re.match(HIST_WITH_NS_PATTERN, arg_hist):
+		# Analysing latency for specific histogram for specific namespace ({namespace}-histogram)
+		# It needs to read single bucket dump for a slice
+		hist_tags = [HIST_TAG_PREFIX + "%s "%(arg_hist)]
+
 	else:
+		# Analysing latency for histogram arg_hist
+		# It needs to read all bucket dumps for a slice
 		hist_tags = [s%(arg_hist) for s in HIST_TAG_PATTERNS]
+		read_all_dumps = True
 
 	# After this point we may need user input to stop:
 	if arg_from == "tail":
@@ -540,7 +559,7 @@ def main(arg_log, arg_hist, arg_slice, arg_from, arg_duration, \
 
 	# Find first histogram:
 	old_total, old_values, old_dt, line = \
-		read_hist(hist_tags, init_dt, file_id)
+		read_hist(hist_tags, init_dt, file_id, read_all_dumps=read_all_dumps)
 	if not line:
 		print "can't find histogram " + arg_hist + \
 			" from start time " + arg_from
@@ -584,7 +603,7 @@ def main(arg_log, arg_hist, arg_slice, arg_from, arg_duration, \
 	# Process all the time slices:
 	while arg_duration == None or end_dt > old_dt:
 		new_total, new_values, new_dt, line = \
-			read_hist(hist_tags, after_dt, file_id, line)
+			read_hist(hist_tags, after_dt, file_id, line, read_all_dumps=read_all_dumps)
 		if not new_values:
 			# This can happen in either eof or end of input time range
 			break
