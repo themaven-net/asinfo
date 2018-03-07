@@ -33,45 +33,160 @@ import os
 import sys
 from subprocess import Popen, PIPE
 
-parser = argparse.ArgumentParser(add_help=False)
-parser.add_argument("-h", "--host", default="127.0.0.1", help="server host name (default: %(default)s)")
-parser.add_argument("-p", "--port", type=int, default=3000, help="server port (default: %(default)s)")
-parser.add_argument("-t", "--tls_name", dest="tls_name"
-                    , help="TLS name of host to verify for TLS connection. It is required if tls_enable is set.")
-parser.add_argument("-U", "--user", help="user name")
-parser.add_argument("-P", "--password", nargs="?", const="prompt", help="password")
-parser.add_argument("-v", "--value", help="fetch single value (default all)")
-parser.add_argument("-l", "--lineseperator", action="store_true", default=False, help="print in seperate lines (default: %(default)s)")
-parser.add_argument("-u", "--usage", action='help', help="show program usage")
-parser.add_argument("--tls_enable", dest="tls_enable", action="store_true", help="Enable TLS on connections. By default TLS is disabled.")
-parser.add_argument("--tls_encrypt_only", dest="tls_encrypt_only", action="store_true"
-                    , help="Enable mode to do only encryption, so connections won't verify certificates.")
-parser.add_argument("--tls_cafile", dest="tls_cafile", help="Path to a trusted CA certificate file.")
-parser.add_argument("--tls_capath", dest="tls_capath", help="Path to a directory of trusted CA certificates.")
-parser.add_argument("--tls_protocols", dest="tls_protocols"
-                    , help="Set the TLS protocol selection criteria. This format is the same as Apache's SSLProtocol documented "
-                            "at https://httpd.apache.org/docs/current/mod/mod_ssl.html#sslprotocol"
-                            "If not specified the asinfo will use '-all +TLSv1.2' if has support for TLSv1.2,"
-                            "otherwise it will be '-all +TLSv1'.")
-parser.add_argument("--tls_cipher_suite", dest="tls_cipher_suite"
-                    , help="Set the TLS cipher selection criteria. The format is the same as OpenSSL's Cipher List Format documented "
-                            "at https://www.openssl.org/docs/man1.0.1/apps/ciphers.html")
-parser.add_argument("--tls_keyfile", dest="tls_keyfile"
-                    , help="Path to the key for mutual authentication (if Aerospike Cluster is supporting it).")
-parser.add_argument("--tls_certfile", dest="tls_certfile"
-                    , help="Path to the chain file for mutual authentication (if Aerospike Cluster is supporting it).")
-parser.add_argument("--tls_cert_blacklist", dest="tls_cert_blacklist"
-                    , help="Path to a certificate blacklist file. The file should contain one line for each blacklisted certificate entry. "
-                            "Each line starts with the certificate serial number expressed in hex. "
-                            "Each entry may optionally specify the issuer name of the "
-                            "certificate (serial numbers are only required to be unique per issuer)."
-                            "Example: "
-                            "867EC87482B2 /C=US/ST=CA/O=Acme/OU=Engineering/CN=TestChainCA")
-parser.add_argument("--tls_crl_check", dest="tls_crl_check", action="store_true"
-                    , help="Enable CRL checking for leaf certificate. An error occurs if a valid CRL files cannot be found in tls_capath.")
-parser.add_argument("--tls_crl_check_all", dest="tls_crl_check_all", action="store_true"
-                    , help="Enable CRL checking for entire certificate chain. An error occurs if a valid CRL files cannot be found in tls_capath.")
-args = parser.parse_args()
+__version__ = '3.15.3.2'
+
+def print_config_help():
+    print ("\n")
+    print ("Usage: asinfo [OPTIONS]")
+    print ("---------------------------------------------------------------------------------------\n")
+
+    print (" -V --version         Show the version of asinfo and exit")
+    print (" -E --help            Show program usage.")
+    print (" -v --value           Fetch single value (Default: all).")
+    print (" -l --line-separator  Print in separate lines (Default: False).")
+
+    print_config_file_option()
+    config_file_help()
+
+def print_config_file_option():
+	print ("\n")
+	print ("Configuration File Allowed Options")
+	print ("----------------------------------\n")
+	print ("[cluster]")
+	print (" -h HOST, --host=HOST\n"
+           "                      HOST is \"<host1>[:<tlsname1>][:<port1>],...\" \n"
+           "                      Server seed hostnames or IP addresses. The tlsname is \n"
+           "                      only used when connecting with a secure TLS enabled \n"
+           "                      server. Default: localhost:3000\n"
+           "                      Examples:\n"
+           "                        host1\n"
+           "                        host1:3000,host2:3000\n"
+           "                        192.168.1.10:cert1:3000,192.168.1.20:cert2:3000")
+	print (" -p PORT, --port=PORT \n"
+           "                      Server default port. Default: 3000")
+	print (" -U USER, --user=USER \n"
+           "                      User name used to authenticate with cluster. Default: none")
+	print (" -P, --password\n"
+           "                      Password used to authenticate with cluster. Default: none\n"
+           "                      User will be prompted on command line if -P specified and no\n"
+           "                      password is given.")
+	print (" --tls-enable         Enable TLS on connections. By default TLS is disabled.")
+	# Deprecated
+	# print(" --tls-encrypt-only   Disable TLS certificate verification.\n")
+	print (" --tls-cafile=TLS_CAFILE <path>\n"
+           "                      Path to a trusted CA certificate file.")
+	print (" --tls-capath=TLS_CAPATH <path>\n"
+           "                      Path to a directory of trusted CA certificates.")
+	print (" --tls-protocols=TLS_PROTOCOLS\n"
+           "                      Set the TLS protocol selection criteria. This format\n"
+           "                      is the same as Apache's SSLProtocol documented at http\n"
+           "                      s://httpd.apache.org/docs/current/mod/mod_ssl.html#ssl\n"
+           "                      protocol . If not specified the asinfo will use '-all\n"
+           "                      +TLSv1.2' if has support for TLSv1.2,otherwise it will\n"
+           "                      be '-all +TLSv1'.")
+	print (" --tls-cipher-suite=TLS_CIPHER_SUITE\n"
+           "                      Set the TLS cipher selection criteria. The format is\n"
+           "                      the same as Open_sSL's Cipher List Format documented\n"
+           "                      at https://www.openssl.org/docs/man1.0.1/apps/ciphers.\n"
+           "                      html")
+	print (" --tls-keyfile=TLS_KEYFILE <path>\n"
+           "                      Path to the key for mutual authentication (if\n"
+           "                      Aerospike Cluster is supporting it).")
+	print (" --tls-certfile=TLS_CERTFILE <path>\n"
+           "                      Path to the chain file for mutual authentication (if\n"
+           "                      Aerospike Cluster is supporting it).")
+	print (" --tls-cert-blacklist <path>\n"
+           "                      Path to a certificate blacklist file. The file should\n"
+           "                      contain one line for each blacklisted certificate.\n"
+           "                      Each line starts with the certificate serial number\n"
+           "                      expressed in hex. Each entry may optionally specify\n"
+           "                      the issuer name of the certificate (serial numbers are\n"
+           "                      only required to be unique per issuer).Example:\n"
+           "                      867EC87482B2\n"
+           "                      /C=US/ST=CA/O=Acme/OU=Engineering/CN=TestChainCA")
+
+	print (" --tls-crl-check      Enable CRL checking for leaf certificate. An error\n"
+	       "                      occurs if a valid CRL files cannot be found in\n"
+           "                      tls_capath.")
+	print (" --tls-crl-check-all  Enable CRL checking for entire certificate chain. An\n"
+           "                      error occurs if a valid CRL files cannot be found in\n"
+           "                      tls_capath.")
+	print ("")
+
+def config_file_help():
+	print "\n\n"
+	print ("Default configuration files are read from the following files in the given order:\n"
+          "/etc/aerospike/astools.conf ~/.aerospike/astools.conf\n"
+          "The following sections are read: (cluster include)\n"
+          "The following options effect configuration file behavior\n")
+	print (" --no-config-file\n"
+           "                      Do not read any config file. Default: disabled")
+	print (" --instance <name>\n"
+           "                      Section with these instance is read. e.g in case instance \n"
+           "                      `a` is specified section cluster_a is read.")
+	print (" --config-file <path>\n"
+           "                      Read this file after default configuration file.")
+	print (" --only-config-file <path>\n"
+           "                      Read only this configuration file.")
+	print ("\n")
+
+def get_cli_args():
+	parser = argparse.ArgumentParser(add_help=False, conflict_handler='resolve')
+	add_fn = parser.add_argument
+
+	add_fn("-V", "--version", action="store_true")
+	add_fn("-E", "--help", action="store_true")
+	add_fn("-v", "--value")
+	add_fn("-l", "--line-separator", dest="line-separator", action="store_true")
+
+	add_fn("-h", "--host")
+	add_fn("-p", "--port", type=int)
+	add_fn("-U", "--user")
+	add_fn("-P", "--password", nargs="?")
+
+	add_fn("-t", "--tls-name")
+	add_fn("--tls-enable", dest="tls-enable", action="store_true")
+	add_fn("--tls-cafile", dest="tls-cafile")
+	add_fn("--tls-capath", dest="tls-capath")
+	add_fn("--tls-protocols", dest="tls-protocols")
+	add_fn("--tls-cipher-suite", dest="tls-cipher-suite")
+	add_fn("--tls-keyfile", dest="tls-keyfile")
+	add_fn("--tls-certfile", dest="tls-certfile")
+	add_fn("--tls-cert-blacklist", dest="tls-cert-blacklist")
+	add_fn("--tls-crl-check", dest="tls-crl-check", action="store_true")
+	add_fn("--tls-crl-check-all", dest="tls-crl-check-all",  action="store_true")
+
+	add_fn("--config-file", dest="config-file")
+	add_fn("--instance")
+	add_fn("--no-config-file", dest="no-config-file", action="store_true")
+	add_fn("--only-config-file", dest="only-config-file")
+
+	# Old style parameter with underscore
+	# Todo: deprecate old style parameters
+	add_fn("--tls_name")
+	add_fn("--tls_enable", action="store_true")
+	add_fn("--tls_cafile")
+	add_fn("--tls_capath")
+	add_fn("--tls_protocols")
+	add_fn("--tls_cipher_suite")
+	add_fn("--tls_keyfile")
+	add_fn("--tls_certfile")
+	add_fn("--tls_cert_blacklist")
+	add_fn("--tls_crl_check",  action="store_true")
+	add_fn("--tls_crl_check_all", action="store_true")
+
+	return parser.parse_args()
+
+args = get_cli_args()
+
+if args.help:
+	print_config_help()
+	exit(0)
+
+if args.version:
+	print "Aerospike Information Tool"
+	print "Version " + str(__version__)
+	exit(0)
 
 if args.value == "stats":
 	args.value = "statistics"
@@ -97,7 +212,7 @@ for arg, val in args.__dict__.iteritems():
 				cmd += " \"%s\" " %(val)
 
 # asinfo works with only single node (seed node)
-cmd += " --asinfo"
+cmd += " --asinfo-mode"
 
 # final asadm command
 if asinfo_cmd:
@@ -106,15 +221,19 @@ if asinfo_cmd:
 p = Popen(cmd, shell=True, stdout=PIPE, stderr=PIPE)
 out, err = p.communicate()
 if err:
+	if out:
+		print out
+
 	print str(err)
-	print
-	print "asinfo requires asadm (>= 0.1.12), please check asadm version."
 	exit(1)
+
 elif out:
 	out = str(out).strip()
 
-	if  "Not able to connect any cluster" in out:
-		print "request to ",args.host,":",args.port," returned error"
+	connection_errors = ["Not able to connect any cluster", "Could not connect to node"]
+	if any(ce in out for ce in connection_errors):
+		# print "request to ",args.host,":",args.port," returned error"
+		print out
 		exit(1)
 
 	if  "error:" in out.lower():
@@ -123,6 +242,8 @@ elif out:
 
 	if p.returncode:
 		print "request to ",args.host,":",args.port," returned error"
+		if out:
+			print out
 		exit(1)
 
 	print out.strip()

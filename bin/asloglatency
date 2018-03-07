@@ -55,6 +55,7 @@ import threading
 import time
 import types
 
+__version__ = '3.15.3.2'
 
 #===========================================================
 # Constants
@@ -453,6 +454,14 @@ def usage():
 	print "    default: 3"
 	print " -r (roll until user hits return key or ctrl-c)"
 	print "    default: set if -f tail, otherwise not set"
+	print " -V show tool version"
+
+#------------------------------------------------
+# Print version.
+#
+def print_version():
+	print "Aerospike Log Latency Tool"
+	print "Version " + str(__version__)
 
 #------------------------------------------------
 # Main function.
@@ -664,9 +673,9 @@ def main(arg_log, arg_hist, arg_slice, arg_from, arg_duration, \
 #
 
 try:
-	opts, args = getopt.getopt(sys.argv[1:], "l:h:t:f:d:n:e:N:r", \
-		["log=", "histogram=", "slice=", "from", "duration", \
-		 "num_buckets=", "every_nth=", "rolling", "namespace="])
+	opts, args = getopt.getopt(sys.argv[1:], "l:h:t:f:d:n:e:rN:VE", \
+		["log=", "histogram=", "slice=", "from=", "duration=", \
+		 "num_buckets=", "every_nth=", "rolling", "namespace=", "version", "help"])
 except getopt.GetoptError, err:
 	print str(err)
 	usage()
@@ -684,6 +693,12 @@ arg_ns = None
 
 # Set the arguments:
 for o, a in opts:
+	if o == "-V" or o == "--version":
+		print_version()
+		exit(0)
+	if o == "-E" or o == "--help":
+		usage()
+		exit(0)
 	if o == "-l" or o == "--log":
 		arg_log = a
 	if o == "-h" or o == "--histogram":
