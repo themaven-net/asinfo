@@ -55,7 +55,7 @@ import threading
 import time
 import types
 
-__version__ = '3.15.3.2'
+__version__ = '3.15.3.6'
 
 #===========================================================
 # Constants
@@ -544,10 +544,11 @@ def main(arg_log, arg_hist, arg_slice, arg_from, arg_duration, \
 
 	# Print first line of output table header to let user know we're live:
 	if arg_ns:
-		print "{%s}-%s"%(arg_ns, arg_hist)
+                print "Histogram : {%s}-%s"%(arg_ns, arg_hist)
 	else:
-		print arg_hist
+                print "Histogram Name : %s"%(arg_hist)
 
+        print "Log       : " + str(arg_log)
 	# Find datetime at which to start, and seek to starting point:
 	head_dt = read_head_dt(file_id)
 	if arg_from == "head":
@@ -556,7 +557,8 @@ def main(arg_log, arg_hist, arg_slice, arg_from, arg_duration, \
 	else:
 		tail_dt = read_tail_dt(file_id, arg_log)
 		if arg_from == "tail":
-			init_dt = tail_dt
+                        # Start from 5 min behind to get context
+			init_dt = tail_dt - datetime.timedelta(minutes=5)
 		else:
 			init_dt = parse_init_dt(arg_from, tail_dt)
 			if not init_dt:
@@ -565,6 +567,9 @@ def main(arg_log, arg_hist, arg_slice, arg_from, arg_duration, \
 			if init_dt < head_dt:
 				init_dt = head_dt
 		seek_back(init_dt, head_dt, tail_dt, file_id, arg_log)
+
+        print "From      : " + str(init_dt)
+        print ""
 
 	# Find first histogram:
 	old_total, old_values, old_dt, line = \
@@ -683,13 +688,13 @@ except getopt.GetoptError, err:
 
 # Default values for arguments:
 arg_log = "/var/log/aerospike/aerospike.log"
-arg_hist = None
+arg_hist = "read"
 arg_slice = "10"
 arg_from = "tail"
 arg_duration = None
 arg_num_buckets = 3
 arg_every_nth = 3
-arg_ns = None
+arg_ns = "test"
 
 # Set the arguments:
 for o, a in opts:

@@ -28,12 +28,11 @@
 #
 #
 
-import argparse
 import os
 import sys
 from subprocess import Popen, PIPE
 
-__version__ = '3.15.3.2'
+__version__ = '3.15.3.6'
 
 def print_config_help():
     print ("\n")
@@ -70,6 +69,9 @@ def print_config_file_option():
            "                      Password used to authenticate with cluster. Default: none\n"
            "                      User will be prompted on command line if -P specified and no\n"
            "                      password is given.")
+	print (" --auth=AUTHENTICATION_MODE \n"
+           "                      Authentication mode. Values: ['EXTERNAL', 'EXTERNAL_INSECURE', 'INTERNAL'].\n"
+           "                      Default: INTERNAL")
 	print (" --tls-enable         Enable TLS on connections. By default TLS is disabled.")
 	# Deprecated
 	# print(" --tls-encrypt-only   Disable TLS certificate verification.\n")
@@ -131,8 +133,17 @@ def config_file_help():
 	print ("\n")
 
 def get_cli_args():
-	parser = argparse.ArgumentParser(add_help=False, conflict_handler='resolve')
-	add_fn = parser.add_argument
+	have_argparse = True
+	try:
+		import argparse
+		parser = argparse.ArgumentParser(add_help=False, conflict_handler='resolve')
+		add_fn = parser.add_argument
+	except Exception:
+		import optparse
+		have_argparse = False
+		usage = "usage: %prog [options]"
+		parser = optparse.OptionParser(usage, add_help_option=False)
+		add_fn = parser.add_option
 
 	add_fn("-V", "--version", action="store_true")
 	add_fn("-E", "--help", action="store_true")
@@ -142,8 +153,12 @@ def get_cli_args():
 	add_fn("-h", "--host")
 	add_fn("-p", "--port", type=int)
 	add_fn("-U", "--user")
-	add_fn("-P", "--password", nargs="?")
+	if have_argparse:
+		add_fn("-P", "--password", nargs="?")
+	else:
+		add_fn("-P", "--password", dest="password", action="store_const", const="prompt")
 
+	add_fn("--auth")
 	add_fn("-t", "--tls-name")
 	add_fn("--tls-enable", dest="tls-enable", action="store_true")
 	add_fn("--tls-cafile", dest="tls-cafile")
@@ -175,7 +190,11 @@ def get_cli_args():
 	add_fn("--tls_crl_check",  action="store_true")
 	add_fn("--tls_crl_check_all", action="store_true")
 
-	return parser.parse_args()
+	if have_argparse:
+		return parser.parse_args()
+
+	(cli_args, args) = parser.parse_args()
+	return cli_args
 
 args = get_cli_args()
 
@@ -194,11 +213,11 @@ if args.value == "stats":
 # Add self path as first in $PATH to resolve asadm
 os.environ["PATH"] = sys.path[0] + ":" + os.getenv("PATH")
 
-# asadm ( >= 0.1.12)
+# asadm ( >= 0.1.18)
 cmd = "asadm"
 asinfo_cmd = ""
 
-for arg, val in args.__dict__.iteritems():
+for arg, val in vars(args).iteritems():
 	if arg == "value":
 		if val:
 			asinfo_cmd += "\'%s\'"%(str(val))
