@@ -55,13 +55,14 @@ import threading
 import time
 import types
 
-__version__ = '3.15.3.18'
+__version__ = '3.17.0'
 
 #===========================================================
 # Constants
 #
 
 DT_FMT = "%b %d %Y %H:%M:%S"
+DT_WITH_MS_FMT = "%b %d %Y %H:%M:%S.%f"
 DT_TO_MINUTE_FMT = "%b %d %Y %H:%M"
 DT_TIME_FMT = "%H:%M:%S"
 HIST_TAG_PREFIX = "histogram dump: "
@@ -82,6 +83,20 @@ bucket_labels = ("00", "01", "02", "03", "04", "05", "06", "07", "08", "09", \
 	"10", "11", "12", "13", "14", "15", "16")
 all_buckets = len(bucket_labels)
 bucket_unit = "ms"
+
+
+# relative stats to input histogram
+# format:
+# histogram: (
+#	[in order path for stat with stat name],
+#	[(index of value, "name of output column")]
+# )
+relative_stat_info = {
+	"batch-index" : (
+		['batch-sub:', 'read'],
+		[(0,"recs/sec")]
+	)
+}
 
 #===========================================================
 # Function Definitions
@@ -225,7 +240,6 @@ def subtract_buckets(new_values, old_values):
 # Add one set of bucket values to another.
 #
 
-
 def add_buckets(b1_values, b2_values):
 	slice_values = {}
 	for b in range(all_buckets):
@@ -257,42 +271,213 @@ def percentage_over(bucket, percentages):
 #
 def parse_dt(line):
 	prefix = line[0: line.find(" GMT")]
-	return datetime.datetime(*(time.strptime(prefix, DT_FMT)[0:6]))
+	try:
+		return datetime.datetime(*(time.strptime(prefix, DT_FMT)[0:6]))
+	except Exception:
+		# new server version supports timestamp with milliseconds
+		# try to parse with new format
+		return datetime.datetime(*(time.strptime(prefix, DT_WITH_MS_FMT)[0:6]))
 
 #------------------------------------------------
+# Check line contains strings from strs in given order.
+#
+def contains_substrings_in_order(line="", strs=[]):
+	if not strs:
+		return True
+
+	if not line:
+		return False
+
+	s_str = strs[0]
+	if not s_str:
+		return True
+
+	if s_str in line:
+		try:
+			main_str = line.split(s_str, 1)[1]
+
+		except Exception:
+			main_str = ""
+
+		if len(strs) <= 1:
+			return True
+
+		return contains_substrings_in_order(main_str, strs[1:])
+
+	else:
+		return False
+
+#-------------------------------------------------
+# Get a stat value from line.
+#
+def read_stat(line, stat=[]):
+	values = []
+	if not stat:
+		return values
+
+	latency_pattern1 = '%s (\d+)'
+	latency_pattern2 = '%s \(([0-9,\s]+)\)'
+	latency_pattern3 = '(\d+)\((\d+)\) %s'
+	latency_pattern4 = '%s \((\d+)'
+
+	grep_str = stat[-1]
+
+	m = re.search(latency_pattern1 % (grep_str), line)
+	if m:
+		values.append(int(m.group(1)))
+		return values
+
+	m = re.search(latency_pattern2 % (grep_str), line)
+	if m:
+		values = map(lambda x: int(x), m.group(1).split(","))
+		return values
+
+	m = re.search(latency_pattern3 % (grep_str), line)
+	if m:
+		values = map(lambda x: int(x), list(m.groups()))
+
+	m = re.search(latency_pattern4 % (grep_str), line)
+	if m:
+		values.append(int(m.group(1)))
+		return values
+
+	return values
+
+#------------------------------------------------
+# Add one list of stat values to another.
+#
+def add_stat_values(v1, v2):
+	if not v1:
+		return v2
+
+	if not v2:
+		return v1
+
+	l1 = len(v1)
+	l2 = len(v2)
+
+	values = []
+	for i in range(max(l1, l2)):
+		val = 0
+		if i < l1:
+			val += v1[i]
+
+		if i < l2:
+			val += v2[i]
+
+		values.append(val)
+
+	return values
+
+#------------------------------------------------
+# Subtract one list of stat values from another.
+#
+def subtract_stat_values(new_values, old_values):
+	values = []
+
+	newl = len(new_values)
+	oldl = len(old_values)
+
+	for i in range(max(newl, oldl)):
+		if i < newl:
+			# next item from new_values
+			newval = new_values[i]
+			if i < oldl:
+				# item available for same index in old_values
+				values.append(newval - old_values[i])
+
+			else:
+				# item not available for same index in old_values
+				values.append(newval)
+
+		else:
+			# item not available in new_values
+			# add 0
+			values.append(0)
+
+	return values
+
+#------------------------------------------------
+# Find max from two lists of stat values.
+#
+def get_max_stat_values(new_values, old_values):
+	values = []
+
+	newl = len(new_values)
+	oldl = len(old_values)
+
+	for i in range(max(newl, oldl)):
+		if i >= newl:
+			# no item in new_values
+			values.append(old_values[i])
+		elif i >= oldl:
+			# no item in old_values
+			values.append(new_values[i])
+		else:
+			# items available for index i in both list
+			values.append(max(old_values[i], new_values[i]))
+
+	return values
+
+#-------------------------------------------------
 # Get a histogram at or just after the specified datetime.
 #
-def read_hist(hist_tags, after_dt, file_id, line = 0, end_dt=None, before_dt=None, read_all_dumps=False):
+def read_hist(hist_tags, after_dt, file_id, line = 0, end_dt=None, before_dt=None, read_all_dumps=False, relative_stat_path=[]):
 	if not line:
+		# read next line
 		line = read_line(file_id)
+
+	total = 0
+	values = 0
+	stat_values = []
+	dt = ""
+
 	while True:
 		if not line:
-			return 0, 0, 0, 0
+			return total, values, 0, 0, stat_values
+
 		dt = parse_dt(line)
+
 		if dt<after_dt:
+			# ignore lines with timestamp before before_dt
 			line = read_line(file_id)
 			continue
+
 		if end_dt and dt>end_dt:
-			return 0, 0, dt, line
+			# found line with timestamp after end_dt
+			return total, values, dt, line, stat_values
+
 		if before_dt and dt>before_dt:
-			return 0, 0, dt, line
-		if any(re.search(ht, line) for ht in hist_tags):
+			# found line with timestamp after before_dt
+			return total, values, dt, line, stat_values
+
+		if relative_stat_path and contains_substrings_in_order(line, relative_stat_path):
+			temp_sval = read_stat(line, relative_stat_path)
+			stat_values = add_stat_values(stat_values, temp_sval)
+
+		elif any(re.search(ht, line) for ht in hist_tags):
 			break
+
 		line = read_line(file_id)
 
 	total, values, line = read_bucket_values(line, file_id)
 	if not line:
-		return 0, 0, 0, 0
+		return 0, 0, 0, 0, stat_values
 
-	if read_all_dumps:
+	if read_all_dumps or relative_stat_path:
 		if not before_dt:
 			before_dt = dt+datetime.timedelta(seconds=NS_SLICE_SECONDS)
-		r_total, r_values, r_dt, line = read_hist(hist_tags, after_dt, file_id, line,end_dt, before_dt, read_all_dumps=read_all_dumps)
+		r_total, r_values, r_dt, line, r_stat_values = read_hist(hist_tags, after_dt, file_id, line, end_dt,
+																		 before_dt, read_all_dumps=read_all_dumps,
+																		 relative_stat_path=relative_stat_path)
 		total += r_total
 		if r_values:
 			values = add_buckets(values, r_values)
 
-	return total, values, dt, line
+		if r_stat_values:
+			stat_values = add_stat_values(stat_values, r_stat_values)
+
+	return total, values, dt, line, stat_values
 
 #------------------------------------------------
 # Find first log line datetime.
@@ -414,7 +599,7 @@ def repeat(what, n):
 # Print a latency data output line.
 #
 def print_line(slice_tag, overs, num_buckets, every_nth, rate = 0, \
-		slice_seconds_actual = 0):
+		slice_seconds_actual = 0, stat_values=[], stat_index=[]):
 	output = "%8s" % (slice_tag)
 	if slice_seconds_actual != 0:
 		output = output + "%6s" % (slice_seconds_actual)
@@ -424,6 +609,14 @@ def print_line(slice_tag, overs, num_buckets, every_nth, rate = 0, \
 		if i % every_nth == 0:
 			output = output + "%7.2f" % (overs[i])
 	output = output + "%11.1f" % (rate)
+
+	if stat_index:
+		for idx_name in stat_index:
+			if idx_name[0] < len(stat_values):
+				output += "%11.1f" % (stat_values[idx_name[0]])
+			else:
+				output += "%12s" % ("-")
+
 	print output
 
 #------------------------------------------------
@@ -437,10 +630,10 @@ def usage():
 	print "    MANDATORY - NO DEFAULT"
 	print "    e.g. 'reads nonet'"
 	print " -N namespace name. If specified will display histogram latency "
-        print "    for the namespace related histogram. e.g read, write."
-        print "    Not required for"
-        print "    - Non-namespace histograms, e.g. svc-demarshal"
-        print "    - Fully qualified namespace histogram names, e.g. {test}-read"
+	print "    for the namespace related histogram. e.g read, write."
+	print "    Not required for"
+	print "    - Non-namespace histograms, e.g. svc-demarshal"
+	print "    - Fully qualified namespace histogram names, e.g. {test}-read"
 	print " -t analysis slice interval"
 	print "    default: 10"
 	print "    other e.g. 3600 or 1:00:00"
@@ -469,7 +662,7 @@ def print_version():
 # Main function.
 #
 def main(arg_log, arg_hist, arg_slice, arg_from, arg_duration, \
-		arg_num_buckets, arg_every_nth, arg_ns=None):
+		arg_num_buckets, arg_every_nth, arg_ns=None, arg_relative_stats=False):
 	global g_rolling
 
 	# Sanity-check some arguments:
@@ -559,7 +752,7 @@ def main(arg_log, arg_hist, arg_slice, arg_from, arg_duration, \
 	else:
 		tail_dt = read_tail_dt(file_id, arg_log)
 		if arg_from == "tail":
-                        # Start from 5 min behind to get context
+			# Start from 5 min behind to get context
 			init_dt = tail_dt - datetime.timedelta(minutes=5)
 		else:
 			init_dt = parse_init_dt(arg_from, tail_dt)
@@ -573,9 +766,16 @@ def main(arg_log, arg_hist, arg_slice, arg_from, arg_duration, \
         print "From      : " + str(init_dt)
         print ""
 
+	relative_stat_path = []
+	relative_stat_index = []
+	if arg_relative_stats and arg_hist in relative_stat_info:
+		info = relative_stat_info[arg_hist]
+		relative_stat_path = info[0]
+		relative_stat_index = info[1]
+
 	# Find first histogram:
-	old_total, old_values, old_dt, line = \
-		read_hist(hist_tags, init_dt, file_id, read_all_dumps=read_all_dumps)
+	old_total, old_values, old_dt, line, old_stat_values = \
+		read_hist(hist_tags, init_dt, file_id, read_all_dumps=read_all_dumps, relative_stat_path=relative_stat_path)
 	if not line:
 		print "can't find histogram " + arg_hist + \
 			" from start time " + arg_from
@@ -595,17 +795,28 @@ def main(arg_log, arg_hist, arg_slice, arg_from, arg_duration, \
 	labels_prefix = "slice-to (sec)"
 	print old_dt.strftime(DT_FMT)
 	print repeat(" ", len(labels_prefix)) + " % > (" + bucket_unit +")"
+
 	labels = labels_prefix
+
+	bucket_underline = ""
 	for i in range(max_bucket):
 		if i % arg_every_nth == 0:
 			labels = labels + "%7s" % (pow(2, i))
+			bucket_underline += " ------"
+
 	labels = labels + "%11s" % "ops/sec"
+
+	relative_stat_underline = ""
+	if relative_stat_index:
+		for idx_name in relative_stat_index:
+			labels += "%11s" % idx_name[1]
+			relative_stat_underline += " ----------"
+
 	print labels
+
 	underline = repeat("-", len(labels_prefix))
-	for i in range(max_bucket):
-		if i % arg_every_nth == 0:
-			underline = underline + " ------"
-	underline = underline + " ----------"
+	underline += bucket_underline + " ----------" + relative_stat_underline
+
 	print underline
 
 	# Other initialization before processing time slices:
@@ -616,10 +827,13 @@ def main(arg_log, arg_hist, arg_slice, arg_from, arg_duration, \
 	total_ops, total_seconds = 0, 0
 	max_rate = 0.0
 
+	total_stat_values = [0.0] * len(old_stat_values)
+	max_stat_values = [0.0] * len(old_stat_values)
+
 	# Process all the time slices:
 	while arg_duration == None or end_dt > old_dt:
-		new_total, new_values, new_dt, line = \
-			read_hist(hist_tags, after_dt, file_id, line, read_all_dumps=read_all_dumps)
+		new_total, new_values, new_dt, line, new_stat_values = \
+			read_hist(hist_tags, after_dt, file_id, line, read_all_dumps=read_all_dumps, relative_stat_path=relative_stat_path)
 		if not new_values:
 			# This can happen in either eof or end of input time range
 			break
@@ -629,12 +843,23 @@ def main(arg_log, arg_hist, arg_slice, arg_from, arg_duration, \
 		slice_values = subtract_buckets(new_values, old_values)
 		slice_seconds_actual = elapsed_seconds(new_dt - old_dt)
 
+		slice_stat_values = []
+		slice_stat_rates = []
+		if relative_stat_path:
+			slice_stat_values = subtract_stat_values(new_stat_values, old_stat_values)
+			slice_stat_rates = [round(float(v) / slice_seconds_actual, 1)
+								 for v in slice_stat_values]
+
 		# Get the rate for this slice:
 		rate = round(float(slice_total) / slice_seconds_actual, 1)
 		total_ops = total_ops + slice_total
 		total_seconds = total_seconds + slice_seconds_actual
 		if rate > max_rate:
 			max_rate = rate
+
+		if relative_stat_path:
+			total_stat_values = add_stat_values(total_stat_values, slice_stat_values)
+			max_stat_values = get_max_stat_values(max_stat_values, slice_stat_rates)
 
 		# Convert bucket values for this slice to percentages:
 		percentages = bucket_percentages(slice_total, slice_values)
@@ -651,12 +876,13 @@ def main(arg_log, arg_hist, arg_slice, arg_from, arg_duration, \
 		# Print this slice's data:
 		slice_to = new_dt.strftime(DT_TIME_FMT)
 		print_line(slice_to, overs, max_bucket, arg_every_nth, rate, \
-			slice_seconds_actual)
+			slice_seconds_actual, slice_stat_rates, relative_stat_index)
 
 		# Prepare for next slice:
 		which_slice = which_slice + 1
 		after_dt = new_dt + slice_timedelta
 		old_total, old_values, old_dt = new_total, new_values, new_dt
+		old_stat_values = new_stat_values
 
 	# Print averages and maximums:
 	if which_slice > 0:
@@ -664,9 +890,13 @@ def main(arg_log, arg_hist, arg_slice, arg_from, arg_duration, \
 			if i % arg_every_nth == 0:
 				avg_overs[i] = avg_overs[i] / which_slice
 		avg_rate = total_ops / total_seconds
+		avg_stat_values = []
+		if relative_stat_path:
+			avg_stat_values = [v/total_seconds for v in total_stat_values]
+
 		print underline
-		print_line("avg", avg_overs, max_bucket, arg_every_nth, avg_rate)
-		print_line("max", max_overs, max_bucket, arg_every_nth, max_rate)
+		print_line("avg", avg_overs, max_bucket, arg_every_nth, avg_rate, stat_values=avg_stat_values, stat_index=relative_stat_index)
+		print_line("max", max_overs, max_bucket, arg_every_nth, max_rate, stat_values=max_stat_values, stat_index=relative_stat_index)
 	else:
 		print "could not find " + str(slice_timedelta) + " of data"
 
@@ -682,7 +912,11 @@ def main(arg_log, arg_hist, arg_slice, arg_from, arg_duration, \
 try:
 	opts, args = getopt.getopt(sys.argv[1:], "l:h:t:f:d:n:e:rN:VE", \
 		["log=", "histogram=", "slice=", "from=", "duration=", \
-		 "num_buckets=", "every_nth=", "rolling", "namespace=", "version", "help"])
+		 "num-buckets=", "every-nth=", "rolling", "namespace=", "version", "help", "relative-stats",
+
+		 # Deprecated
+		 "num_buckets=", "every_nth=",
+		 ])
 except getopt.GetoptError, err:
 	print str(err)
 	usage()
@@ -697,6 +931,7 @@ arg_duration = None
 arg_num_buckets = 3
 arg_every_nth = 3
 arg_ns = None
+arg_relative_stats = False
 
 # Set the arguments:
 for o, a in opts:
@@ -716,15 +951,17 @@ for o, a in opts:
 		arg_from = a
 	if o == "-d" or o == "--duration":
 		arg_duration = a
-	if o == "-n" or o == "--num_buckets":
+	if o == "-n" or o == "--num-buckets" or o == "--num_buckets":
 		arg_num_buckets = int(a)
-	if o == "-e" or o == "--every_nth":
+	if o == "-e" or o == "--every-nth" or o == "--every_nth":
 		arg_every_nth = int(a)
 	if o == "-r" or o == "--rolling":
 		g_rolling = True
 	if o == "-N" or o == "--namespace":
 		arg_ns = a
+	if o == "--relative-stats":
+		arg_relative_stats = True
 
 # Call main():
 main(arg_log, arg_hist, arg_slice, arg_from, arg_duration, \
-	arg_num_buckets, arg_every_nth, arg_ns)
+	arg_num_buckets, arg_every_nth, arg_ns, arg_relative_stats)
