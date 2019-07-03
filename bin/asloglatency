@@ -1,7 +1,7 @@
 #!/usr/bin/python
 ####
 #
-#  Copyright (c) 2008-2016 Aerospike, Inc. All rights reserved.
+#  Copyright (c) 2008-2019 Aerospike, Inc. All rights reserved.
 #
 # Permission is hereby granted, free of charge, to any person obtaining a copy of
 # this software and associated documentation files (the "Software"), to deal in
@@ -55,7 +55,7 @@ import threading
 import time
 import types
 
-__version__ = '3.18.1'
+__version__ = '3.20.0'
 
 #===========================================================
 # Constants
@@ -681,6 +681,10 @@ def main(arg_log, arg_hist, arg_slice, arg_from, arg_duration, \
 	if not slice_timedelta:
 		print "invalid slice time " + arg_slice
 		sys.exit(-1)
+
+	# sometimes slice timestamps are not perfect, there might be some delta
+	if slice_timedelta > parse_timedelta("1"):
+		slice_timedelta -= parse_timedelta("1")
 
 	# Set buckets
 	set_bucket_details(arg_hist)

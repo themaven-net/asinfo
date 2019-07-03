@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 ####
 #
-#  Copyright (c) 2008-2012 Aerospike, Inc. All rights reserved.
+#  Copyright (c) 2008-2019 Aerospike, Inc. All rights reserved.
 #
 # Permission is hereby granted, free of charge, to any person obtaining a copy of
 # this software and associated documentation files (the "Software"), to deal in
@@ -32,7 +32,7 @@ import os
 import sys
 from subprocess import Popen, PIPE
 
-__version__ = '3.18.1'
+__version__ = '3.20.0'
 
 DEFAULTPASSWORD="SomeRandomDefaultPassword"
 
@@ -45,6 +45,8 @@ def print_config_help():
     print (" -E --help            Show program usage.")
     print (" -v --value           Fetch single value (Default: all).")
     print (" -l --line-separator  Print in separate lines (Default: False).")
+    print (" --timeout=value      Set timeout value in seconds. \n"
+           "                      TLS connection does not support timeout. Default: 5 seconds")
 
     print_config_file_option()
     config_file_help()
@@ -204,6 +206,8 @@ def get_cli_args():
 	add_fn("--tls_cert_blacklist")
 	add_fn("--tls_crl_check",  action="store_true")
 	add_fn("--tls_crl_check_all", action="store_true")
+
+	add_fn("--timeout", type=float)
 
 	if have_argparse:
 		return parser.parse_args()
