@@ -1,4 +1,11 @@
-#!/usr/bin/python
+#!/bin/sh
+""":"
+for interp in python python2 ; do
+   command -v > /dev/null "$interp" && exec "$interp" "$0" "$@"
+done
+echo >&2 "No Python interpreter found!"
+exit 1
+":"""
 ####
 #
 #  Copyright (c) 2008-2019 Aerospike, Inc. All rights reserved.
@@ -55,7 +62,7 @@ import threading
 import time
 import types
 
-__version__ = '3.22.0'
+__version__ = '3.23.0'
 
 #===========================================================
 # Constants
