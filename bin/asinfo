@@ -39,7 +39,7 @@ import os
 import sys
 from subprocess import Popen, PIPE
 
-__version__ = '3.25.1'
+__version__ = '3.26.2'
 
 DEFAULTPASSWORD="SomeRandomDefaultPassword"
 
@@ -83,9 +83,12 @@ def print_config_file_option():
 	print (" --auth=AUTHENTICATION_MODE \n"
            "                      Authentication mode. Values: ['EXTERNAL', 'EXTERNAL_INSECURE', 'INTERNAL'].\n"
            "                      Default: INTERNAL")
-	print (" --tls-enable         Enable TLS on connections. By default TLS is disabled.")
+	print (" --tls-enable \n"
+           "                      Enable TLS on connections. By default TLS is disabled.")
 	# Deprecated
 	# print(" --tls-encrypt-only   Disable TLS certificate verification.\n")
+	print (" -t TLS_NAME, --tls-name=TLS_NAME \n"
+           "                      Specify host tlsname.")
 	print (" --tls-cafile=TLS_CAFILE <path>\n"
            "                      Path to a trusted CA certificate file.")
 	print (" --tls-capath=TLS_CAPATH <path>\n"
@@ -108,7 +111,7 @@ def print_config_file_option():
 	print (" --tls-keyfile-password=password\n"
            "                      Password to load protected tls-keyfile.\n"
            "                      It can be one of the following:\n"
-           "                      1) Environment varaible: 'env:<VAR>'\n"
+           "                      1) Environment variable: 'env:<VAR>'\n"
            "                      2) File: 'file:<PATH>'\n"
            "                      3) String: 'PASSWORD'\n"
            "                      Default: none\n"
