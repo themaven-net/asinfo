@@ -1,6 +1,6 @@
 #!/bin/sh
 """:"
-for interp in python python2 ; do
+for interp in python python3 python2 ; do
    command -v > /dev/null "$interp" && exec "$interp" "$0" "$@"
 done
 echo >&2 "No Python interpreter found!"
@@ -39,9 +39,17 @@ import os
 import sys
 from subprocess import Popen, PIPE
 
-__version__ = '3.26.2'
+__version__ = '3.27.1'
 
 DEFAULTPASSWORD="SomeRandomDefaultPassword"
+
+def bytes_to_str(data):
+	try:
+		# python3
+		return(data.decode("utf-8"))
+	except Exception:
+		# python2
+		return(data)
 
 def print_config_help():
     print ("\n")
@@ -139,7 +147,7 @@ def print_config_file_option():
 	print ("")
 
 def config_file_help():
-	print "\n\n"
+	print ("\n\n")
 	print ("Default configuration files are read from the following files in the given order:\n"
           "/etc/aerospike/astools.conf ~/.aerospike/astools.conf\n"
           "The following sections are read: (cluster include)\n"
@@ -232,8 +240,8 @@ if args.help:
 	exit(0)
 
 if args.version:
-	print "Aerospike Information Tool"
-	print "Version " + str(__version__)
+	print ("Aerospike Information Tool")
+	print ("Version " + str(__version__))
 	exit(0)
 
 if args.value == "stats":
@@ -260,7 +268,7 @@ asinfo_cmd = ""
 # tls-keyfile-password is by default None in asadm, so need to pass its default
 pwd_args = ["password"]
 
-for arg, val in vars(args).iteritems():
+for arg, val in list(vars(args).items()):
 	if arg == "value":
 		if val:
 			asinfo_cmd += "\'%s\'"%(str(val))
@@ -282,11 +290,14 @@ if asinfo_cmd:
 
 p = Popen(cmd, shell=True, stdout=PIPE, stderr=PIPE)
 out, err = p.communicate()
+out = bytes_to_str(out)
+err = bytes_to_str(err)
+
 if err:
 	if out:
-		print out
+		print(out)
 
-	print str(err)
+	print(str(err))
 	exit(1)
 
 elif out:
@@ -295,17 +306,17 @@ elif out:
 	connection_errors = ["Not able to connect any cluster", "Could not connect to node"]
 	if any(ce in out for ce in connection_errors):
 		# print "request to ",args.host,":",args.port," returned error"
-		print out
+		print(out)
 		exit(1)
 
 	if  "error:" in out.lower():
-		print str(out)
+		print(str(out))
 		exit(1)
 
 	if p.returncode:
-		print "request to ",args.host,":",args.port," returned error"
+		print("request to ",args.host,":",args.port," returned error")
 		if out:
-			print out
+			print(out)
 		exit(1)
 
-	print out.strip()
+	print(out.strip())
