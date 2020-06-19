@@ -67,7 +67,7 @@ import threading
 import time
 import types
 
-__version__ = '3.27.1'
+__version__ = '3.27.2'
 
 #===========================================================
 # Constants
