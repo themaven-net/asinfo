@@ -39,7 +39,7 @@ import os
 import sys
 from subprocess import Popen, PIPE
 
-__version__ = '3.28.0'
+__version__ = '3.29.0'
 
 DEFAULTPASSWORD="SomeRandomDefaultPassword"
 
