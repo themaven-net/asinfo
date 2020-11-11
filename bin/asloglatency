@@ -1,13 +1,5 @@
-#!/bin/sh
-""":"
-for interp in python python3 python2 ; do
-   command -v > /dev/null "$interp" && exec "$interp" "$0" "$@"
-done
-echo >&2 "No Python interpreter found!"
-exit 1
-":"""
-from __future__ import division
-from __future__ import print_function
+#!/usr/bin/env python3
+
 ####
 #
 #  Copyright (c) 2008-2019 Aerospike, Inc. All rights reserved.
@@ -52,9 +44,6 @@ from __future__ import print_function
 # Imports
 #
 
-from builtins import str
-from builtins import range
-from past.utils import old_div
 import datetime
 import getopt
 import os
@@ -67,7 +56,14 @@ import threading
 import time
 import types
 
-__version__ = '3.31.1'
+#===========================================================
+# Version
+#
+
+if sys.version_info[0] < 3:
+    raise Exception("Asloglatency requires Python 3. Use tools package <= 3.27.x for Python 2 support.")
+
+__version__ = '4.0.2'
 
 #===========================================================
 # Constants
@@ -115,29 +111,15 @@ relative_stat_info = {
 #
 
 #------------------------------------------------
-# Py3/2 compatible string type check.
-#
-def is_str(data):
-    if data is None:
-        return False
-
-    try:
-        return isinstance(data, basestring)
-    except:
-        return isinstance(data, str)
-
-#------------------------------------------------
-# Py3/2 compatible bytes conversion.
+# bytes conversion.
 #
 def bytes_to_str(data):
-    if data is not None and not is_str(data):
+    if data is not None:
         try:
-            # python3
             return data.decode("utf-8")
         except Exception:
             pass
 
-    # python2.7
     return data
 
 #------------------------------------------------
@@ -372,7 +354,7 @@ def read_stat(line, stat=[]):
 
 	m = re.search(latency_pattern3 % (grep_str), line)
 	if m:
-		values = [int(x) for x in list(m.groups())]
+		values = [int(x) for x in m.groups()]
 
 	m = re.search(latency_pattern4 % (grep_str), line)
 	if m:
@@ -461,6 +443,7 @@ def get_max_stat_values(new_values, old_values):
 # Get a histogram at or just after the specified datetime.
 #
 def read_hist(hist_tags, after_dt, file_id, line = 0, end_dt=None, before_dt=None, read_all_dumps=False, relative_stat_path=[]):
+	global bucket_unit
 	if not line:
 		# read next line
 		line = read_line(file_id)
@@ -497,6 +480,12 @@ def read_hist(hist_tags, after_dt, file_id, line = 0, end_dt=None, before_dt=Non
 			break
 
 		line = read_line(file_id)
+
+	# Latency units can change in the middle of a log file.
+	if 'usec' in line:
+		bucket_unit = '\u03bcs'
+	elif 'msec' in line:
+		bucket_unit = 'ms'
 
 	total, values, line = read_bucket_values(line, file_id)
 	if not line:
@@ -607,7 +596,7 @@ def seek_back(init_dt, head_dt, tail_dt, file_id, file_name):
 		return
 	back_seconds = elapsed_seconds(tail_dt - init_dt)
 	file_size = os.stat(file_name)[6]
-	seek_size = old_div((file_size * back_seconds), file_seconds)
+	seek_size = (file_size * back_seconds) // file_seconds
 	if seek_size < SCAN_SIZE:
 		seek_size = SCAN_SIZE
 	if seek_size >= file_size - SCAN_SIZE:
@@ -832,35 +821,10 @@ def main(arg_log, arg_hist, arg_slice, arg_from, arg_duration, \
 			sys.exit(-1)
 		end_dt = old_dt + duration_td
 
-	# Print the output table header:
-	labels_prefix = "slice-to (sec)"
-	print(old_dt.strftime(DT_FMT))
-	print(repeat(" ", len(labels_prefix)) + " % > (" + bucket_unit +")")
-
-	labels = labels_prefix
-
-	bucket_underline = ""
-	for i in range(max_bucket):
-		if i % arg_every_nth == 0:
-			labels = labels + "%7s" % (pow(2, i))
-			bucket_underline += " ------"
-
-	labels = labels + "%11s" % "ops/sec"
-
-	relative_stat_underline = ""
-	if relative_stat_index:
-		for idx_name in relative_stat_index:
-			labels += "%11s" % idx_name[1]
-			relative_stat_underline += " ----------"
-
-	print(labels)
-
-	underline = repeat("-", len(labels_prefix))
-	underline += bucket_underline + " ----------" + relative_stat_underline
-
-	print(underline)
-
 	# Other initialization before processing time slices:
+	print_time_slice_header = True
+	last_bucket_unit = ""
+	new_dt = None
 	which_slice = 0
 	after_dt = old_dt + slice_timedelta
 	overs, avg_overs, max_overs = \
@@ -875,6 +839,43 @@ def main(arg_log, arg_hist, arg_slice, arg_from, arg_duration, \
 	while arg_duration == None or end_dt > old_dt:
 		new_total, new_values, new_dt, line, new_stat_values = \
 			read_hist(hist_tags, after_dt, file_id, line, read_all_dumps=read_all_dumps, relative_stat_path=relative_stat_path)
+		
+		# Wait to print header until after first read_hist which sets bucket_unit to usec if needed
+		if print_time_slice_header:
+			print_time_slice_header = False
+			last_bucket_unit = bucket_unit
+
+			# Print the output table header:
+			labels_prefix = "slice-to (sec)"
+			print(old_dt.strftime(DT_FMT))
+			print(repeat(" ", len(labels_prefix)) + " %> (" + bucket_unit +")")
+
+			labels = labels_prefix
+
+			bucket_underline = ""
+			for i in range(max_bucket):
+				if i % arg_every_nth == 0:
+					labels = labels + "%7s" % (pow(2, i))
+					bucket_underline += " ------"
+
+			labels = labels + "%11s" % "ops/sec"
+
+			relative_stat_underline = ""
+			if relative_stat_index:
+				for idx_name in relative_stat_index:
+					labels += "%11s" % idx_name[1]
+					relative_stat_underline += " ----------"
+
+			print(labels)
+
+			underline = repeat("-", len(labels_prefix))
+			underline += bucket_underline + " ----------" + relative_stat_underline
+
+			print(underline)
+
+		if last_bucket_unit != bucket_unit:
+			break
+
 		if not new_values:
 			# This can happen in either eof or end of input time range
 			break
@@ -929,15 +930,19 @@ def main(arg_log, arg_hist, arg_slice, arg_from, arg_duration, \
 	if which_slice > 0:
 		for i in range(max_bucket):
 			if i % arg_every_nth == 0:
-				avg_overs[i] = old_div(avg_overs[i], which_slice)
-		avg_rate = old_div(total_ops, total_seconds)
+				avg_overs[i] = avg_overs[i] // which_slice
+		avg_rate = total_ops // total_seconds
 		avg_stat_values = []
 		if relative_stat_path:
-			avg_stat_values = [old_div(v,total_seconds) for v in total_stat_values]
+			avg_stat_values = [v // total_seconds for v in total_stat_values]
 
 		print(underline)
 		print_line("avg", avg_overs, max_bucket, arg_every_nth, avg_rate, stat_values=avg_stat_values, stat_index=relative_stat_index)
 		print_line("max", max_overs, max_bucket, arg_every_nth, max_rate, stat_values=max_stat_values, stat_index=relative_stat_index)
+
+		if last_bucket_unit != bucket_unit:
+			print('WARNING: asloglatency stopped early because latency units have changed from %s to %s.' % (last_bucket_unit, bucket_unit))
+			print("Use 'asloglatency -h <histogram> -f '%s'' to bypass this problem." % new_dt.strftime(DT_FMT))
 	else:
 		print("could not find " + str(slice_timedelta) + " of data")
 
