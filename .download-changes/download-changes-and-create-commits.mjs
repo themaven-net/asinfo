@@ -404,7 +404,62 @@ const downloadAndCreateCommit = async (version) => {
   await execFilePromise("git", ["checkout", "--", versionFilename], {cwd: destinationRoot})
 }
 
+/**
+ * @typedef {object} CommandLineOptionsResult
+ * @property {!number} `max-count`
+ */
+const commandLineOptions = {
+  // keys here must not contain special regex characters
+  ["max-count"]: {type: "number", default: undefined},
+}
+const usage = () => {
+  return "Usage: node download-changes-and-create-commits.mjs <OPTIONS>\nOptions:\n" +
+    Object.entries(commandLineOptions)
+      .map(([key,]) =>
+        `  [--${key} ${key.toUpperCase().replace("-","_")}]`
+      )
+      .join("\n")
+}
+/**
+ * sort of a poor-man's yargs
+ * @param {string[]} args
+ * @returns {CommandLineOptionsResult}
+ */
+const processOptions = (args) => {
+  const result = {}
+  for (const [name, config] of Object.entries(commandLineOptions)) {
+    result[name] = config.default
+  }
+  flagLoop: for (let i = 0; i < args.length; i++) {
+    const arg = args[i]
+    if (arg === "--help") {
+      console.log(usage())
+      process.exit(0)
+    }
+    for (const [name, config] of Object.entries(commandLineOptions)) {
+      const match = new RegExp(`--${name}(?:=(.*))?`).exec(arg)
+      if (!match)
+        continue
+      const val = match[1] !== undefined ? match[1] : i + 1 < args.length ? args[++i] : undefined
+      if (val === undefined) {
+        console.error(`Expected value for ${arg}`)
+        console.log(usage())
+        process.exit(1)
+      }
+      const castValue = config.type === "number" ? parseFloat(val) : val
+      result[name] = castValue
+      console.log("found ",name,castValue)
+      continue flagLoop
+    }
+    console.error(`Unknown flag ${arg}`)
+    console.log(usage())
+    process.exit(1)
+  }
+  return result
+}
+
 async function mainPromise() {
+  const options = processOptions(process.argv.slice(2))
   const mostRecentVersion = await loadVersionFile()
   console.info("mostRecentVersion", mostRecentVersion)
   const hubResponse = await dockerHubListVersions()
@@ -413,9 +468,10 @@ async function mainPromise() {
     .filter(x => x !== "latest")
     .filter(x => mostRecentVersion === undefined || compareVersions(x, mostRecentVersion.version) > 0)
     .sort(compareVersions)
-  console.info("versions to download", versions)
+  const earliestVersions = versions.slice(0, options["max-count"])
+  console.info("versions to download", earliestVersions)
 
-  for (const version of versions) {
+  for (const version of earliestVersions) {
     await downloadAndCreateCommit(version)
   }
 }
