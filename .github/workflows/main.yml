@@ -1,0 +1,24 @@
+on:
+  schedule:
+    # around 7:30am on mondays
+    - cron: "27 14 * * 1"
+  workflow_dispatch:
+jobs:
+  fetch_new_commits:
+    runs-on: ubuntu-20.04
+    steps:
+      - uses: actions/checkout@v2
+      - run:
+          # actions/checkout sets up git credentials but not commit author
+          # https://github.com/actions/checkout#push-a-commit-using-the-built-in-token
+          # This email address is a valid user in the github gui
+          # https://github.com/actions/checkout/issues/13#issuecomment-724415212
+          # https://github.community/t/github-actions-bot-email-address/17204/5
+          git config --local user.name 'github-actions[bot]'
+          git config --local user.email '41898282+github-actions[bot]@users.noreply.github.com'
+      - uses: actions/setup-node@v2
+        with:
+          node-version: '14'
+      - run: node .download-changes/download-changes-and-create-commits.mjs
+      - name: Create Pull Request
+        uses: peter-evans/create-pull-request@v3
