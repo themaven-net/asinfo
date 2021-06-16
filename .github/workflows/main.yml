@@ -8,7 +8,7 @@ jobs:
     runs-on: ubuntu-20.04
     steps:
       - uses: actions/checkout@v2
-      - run:
+      - run: |
           # actions/checkout sets up git credentials but not commit author
           # https://github.com/actions/checkout#push-a-commit-using-the-built-in-token
           # This email address is a valid user in the github gui
