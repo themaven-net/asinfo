@@ -37,6 +37,7 @@ const dockerHubRepo = "aerospike/aerospike-tools"
 const directoryInContainer = "opt/aerospike"
 const destinationRoot = path.resolve(__dirname, "..")
 const doNotOverwriteFiles = ["README.md"]
+const filenamesToCopyRegardlessOfLicense = ["requirements.txt"]
 
 
 /**
@@ -242,9 +243,17 @@ async function* copyOpenSourceFiles(source, destination) {
         }
       }
     } else if (stat.isFile()) {
+      const basename = path.basename(p)
       const licenseName = await readLicense(sourceResolved)
+      let shouldCopy = false
       if (licenseName !== undefined) {
         console.info(`${sourceResolved} seems to be ${licenseName}; copying it to ${destResolved}`)
+        shouldCopy = true
+      } else if (filenamesToCopyRegardlessOfLicense.includes(basename)) {
+        console.info(`${sourceResolved} filename is whitelisted; copying it to ${destResolved}`)
+        shouldCopy = true
+      }
+      if (shouldCopy) {
         await mkdirp(path.dirname(destResolved))
         await fs.copyFile(sourceResolved, destResolved)
         yield p
