@@ -2,7 +2,7 @@
 
 This is a copy of the free/open source commands from the `aerospike/aerospike-tools` docker image
 (see [Aerospike: Tools and Utilities](https://docs.aerospike.com/docs/tools/index.html),
-[DockerHub: aerospike/aerospike-tools](https://github.com/aerospike/aerospike-tools.docker),
+[DockerHub: aerospike/aerospike-tools](https://hub.docker.com/r/aerospike/aerospike-tools),
 [GitHub: aerospike/aerospike-tools.docker](https://github.com/aerospike/aerospike-tools.docker)).
 
 The tools in this repo include `asinfo`, `asloglatency`, `asmonitor`
