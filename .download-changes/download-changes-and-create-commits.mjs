@@ -270,7 +270,7 @@ async function* copyOpenSourceFiles(source, destination) {
 const gitRmFilesExcluding = async (whitelist) => {
   const whitelistSet = new Set(whitelist)
   // -z: nul-terminate paths
-  const {stdout} = await execFilePromise("git", ["ls-tree", "-r", "-z", "head"], {cwd: destinationRoot})
+  const {stdout} = await execFilePromise("git", ["ls-tree", "-r", "-z", "HEAD"], {cwd: destinationRoot})
   const pathsToDelete = stdout
     .trim().split("\0")
     .map(line => /[^ ]+ \w+ \w+\t([^\0]+)/.exec(line)?.[1])
