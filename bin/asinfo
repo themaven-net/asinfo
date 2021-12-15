@@ -36,7 +36,7 @@ from subprocess import Popen, PIPE
 if sys.version_info[0] < 3:
     raise Exception("Asinfo requires Python 3. Use tools package <= 3.27.x for Python 2 support.")
 
-__version__ = '6.1.2'
+__version__ = '6.2.0'
 
 DEFAULTPASSWORD="SomeRandomDefaultPassword"
 
