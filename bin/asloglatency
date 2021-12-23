@@ -63,7 +63,7 @@ import types
 if sys.version_info[0] < 3:
     raise Exception("Asloglatency requires Python 3. Use tools package <= 3.27.x for Python 2 support.")
 
-__version__ = '6.2.0'
+__version__ = '6.3.0'
 
 #===========================================================
 # Constants
@@ -889,11 +889,11 @@ def main(arg_log, arg_hist, arg_slice, arg_from, arg_duration, \
 		slice_stat_rates = []
 		if relative_stat_path:
 			slice_stat_values = subtract_stat_values(new_stat_values, old_stat_values)
-			slice_stat_rates = [round(float(v) / slice_seconds_actual, 1)
+			slice_stat_rates = [v / slice_seconds_actual
 								 for v in slice_stat_values]
 
 		# Get the rate for this slice:
-		rate = round(float(slice_total) / slice_seconds_actual, 1)
+		rate = slice_total / slice_seconds_actual
 		total_ops = total_ops + slice_total
 		total_seconds = total_seconds + slice_seconds_actual
 		if rate > max_rate:
@@ -910,9 +910,9 @@ def main(arg_log, arg_hist, arg_slice, arg_from, arg_duration, \
 		for i in range(max_bucket):
 			if i % arg_every_nth:
 				continue
-			overs[i] = round(percentage_over(i, percentages), 2)
-			avg_overs[i] = avg_overs[i] + overs[i]
-			if overs[i] > max_overs[i]:
+			overs[i] = percentage_over(i, percentages)
+			avg_overs[i] += overs[i]
+			if overs[i] > max_overs[i]:  
 				max_overs[i] = overs[i]
 
 		# Print this slice's data:
@@ -927,14 +927,17 @@ def main(arg_log, arg_hist, arg_slice, arg_from, arg_duration, \
 		old_stat_values = new_stat_values
 
 	# Print averages and maximums:
-	if which_slice > 0:
+	total_slices = which_slice	
+	if total_slices > 0:
 		for i in range(max_bucket):
 			if i % arg_every_nth == 0:
-				avg_overs[i] = avg_overs[i] // which_slice
-		avg_rate = total_ops // total_seconds
+				avg_overs[i] = avg_overs[i] / total_slices
+    
+    	# The average for the duration of the analysis. This is different than rate_sum
+		avg_rate = total_ops / total_seconds
 		avg_stat_values = []
 		if relative_stat_path:
-			avg_stat_values = [v // total_seconds for v in total_stat_values]
+			avg_stat_values = [v / total_seconds for v in total_stat_values]
 
 		print(underline)
 		print_line("avg", avg_overs, max_bucket, arg_every_nth, avg_rate, stat_values=avg_stat_values, stat_index=relative_stat_index)
