@@ -12,8 +12,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from datetime import datetime
 import itertools
-from unicodedata import numeric
+from typing import Iterable, Union
 from lib.view.sheet.decleration import ComplexAggregator, EntryData
 from lib.live_cluster.client.node import ASINFO_RESPONSE_OK, ASInfoError
 from lib.view.sheet import (
@@ -44,6 +45,9 @@ def project_build(b, v):
     if "enterprise" in v.lower():
         return "E-" + b
 
+    if "federal" in v.lower():
+        return "F-" + b
+
     return b
 
 
@@ -70,7 +74,7 @@ def project_xdr_req_shipped_errors(s, esc, ess):
 #
 
 
-def weighted_avg(weights: list[numeric], values: list[numeric]):
+def weighted_avg(weights: Iterable[float], values: Iterable[float]):
     total = 0.0
     weighted_avg = 0.0
 
@@ -203,9 +207,9 @@ info_network_sheet = Sheet(
 
 
 def create_usage_weighted_avg(type: str):
-    def usage_weighted_avg(edatas: EntryData):
-        pcts = map(lambda edata: edata.value, edatas)
-        byte_values = map(lambda edata: edata.record[type]["Used"], edatas)
+    def usage_weighted_avg(edatas: list[EntryData]):
+        pcts: map[float] = map(lambda edata: edata.value, edatas)
+        byte_values: map[float] = map(lambda edata: edata.record[type]["Used"], edatas)
         return weighted_avg(pcts, byte_values)
 
     return usage_weighted_avg
@@ -733,6 +737,20 @@ def sindex_state_converter(edata):
     return state
 
 
+def _ignore_zero(num: int):
+    if num == 0:
+        return None
+
+    return num
+
+
+def _ignore_null(s: str):
+    if s == "null":
+        return None
+
+    return s
+
+
 info_sindex_sheet = Sheet(
     (
         Field("Index Name", Projectors.String("sindex_stats", "indexname")),
@@ -740,7 +758,7 @@ info_sindex_sheet = Sheet(
         Field("Set", Projectors.String("sindex_stats", "set")),
         node_field,
         hidden_node_id_field,
-        Field("Bins", Projectors.String("sindex_stats", "bins", "bin")),
+        Field("Bin", Projectors.String("sindex_stats", "bins", "bin")),
         Field("Num Bins", Projectors.Number("sindex_stats", "num_bins")),
         Field("Bin Type", Projectors.String("sindex_stats", "type")),
         Field(
@@ -750,12 +768,44 @@ info_sindex_sheet = Sheet(
         ),  # new
         Field("Sync State", Projectors.String("sindex_stats", "sync_state")),  # old
         # removed 6.0
-        Field("Keys", Projectors.Number("sindex_stats", "keys")),
         Field(
-            "Entries",
-            Projectors.Number("sindex_stats", "entries", "objects"),
+            "Keys",
+            Projectors.Any(
+                FieldType.number,
+                Projectors.Div(
+                    Projectors.Number("sindex_stats", "entries", "objects"),
+                    Projectors.Func(
+                        FieldType.number,
+                        _ignore_zero,
+                        Projectors.Number("sindex_stats", "keys", "entries_per_bval"),
+                    ),
+                ),
+                Projectors.Number("sindex_stats", "keys"),
+            ),
             converter=Converters.scientific_units,
-            aggregator=Aggregators.sum(),
+        ),
+        # added 6.1
+        Subgroup(
+            "Entries",
+            (
+                Field(
+                    "Total",
+                    Projectors.Number("sindex_stats", "entries", "objects"),
+                    converter=Converters.scientific_units,
+                    aggregator=Aggregators.sum(),
+                ),
+                Field(
+                    "Avg Per Rec",
+                    Projectors.Number("sindex_stats", "keys", "entries_per_rec"),
+                    converter=Converters.scientific_units,
+                ),
+                Field(
+                    "Avg Per Bin Val",
+                    Projectors.Number("sindex_stats", "keys", "entries_per_bval"),
+                    converter=Converters.scientific_units,
+                    aggregator=Aggregators.sum(),
+                ),
+            ),
         ),
         Field(
             "Memory Used",
@@ -770,6 +820,14 @@ info_sindex_sheet = Sheet(
             ),
             converter=Converters.byte,
             aggregator=Aggregators.sum(),
+        ),
+        Field(
+            "Context",
+            Projectors.Func(
+                FieldType.string,
+                _ignore_null,
+                Projectors.String("sindex_stats", "context"),
+            ),
         ),
         Subgroup(
             "Queries",
@@ -847,6 +905,285 @@ show_distribution_sheet = Sheet(
 )
 
 
+def extract_value_from_dict(key: str):
+    def extract_value(dict):
+        if key not in dict:
+            return None
+
+        return dict[key]
+
+    return extract_value
+
+
+def _storage_type_display_name(storage_type: str, field_title: str, subgroup: bool):
+    title = ""
+
+    if not subgroup:
+        title = (
+            " ".join(val[0].upper() + val[1:] for val in storage_type.split(" "))
+            + " "
+            + field_title
+        )
+    else:
+        title = field_title
+
+    return title
+
+
+def create_summary_total(source: str, storage_type: str, subgroup=False):
+    title = _storage_type_display_name(storage_type, "Total", subgroup)
+
+    return Field(
+        title,
+        Projectors.Func(
+            FieldType.number,
+            extract_value_from_dict("total"),
+            Projectors.Identity(source, storage_type),
+        ),
+        converter=Converters.byte,
+    )
+
+
+def create_summary_used(source: str, storage_type: str, subgroup=False):
+    title = _storage_type_display_name(storage_type, "Used", subgroup)
+
+    return Field(
+        title,
+        Projectors.Func(
+            FieldType.number,
+            extract_value_from_dict("used"),
+            Projectors.Identity(source, storage_type),
+        ),
+        converter=Converters.byte,
+    )
+
+
+def create_summary_used_pct(source: str, storage_type: str, subgroup=False):
+    title = _storage_type_display_name(storage_type, "Used %", subgroup)
+
+    return Field(
+        title,
+        Projectors.Func(
+            FieldType.number,
+            extract_value_from_dict("used_pct"),
+            Projectors.Identity(source, storage_type),
+        ),
+        converter=Converters.round(2),
+    )
+
+
+def create_summary_avail(source: str, storage_type: str, subgroup=False):
+    title = _storage_type_display_name(storage_type, "Avail", subgroup)
+
+    return Field(
+        title,
+        Projectors.Func(
+            FieldType.number,
+            extract_value_from_dict("avail"),
+            Projectors.Identity(source, storage_type),
+        ),
+        converter=Converters.byte,
+    )
+
+
+def create_summary_avail_pct(source: str, storage_type: str, subgroup=False):
+    title = _storage_type_display_name(storage_type, "Avail%", subgroup)
+
+    return Field(
+        title,
+        Projectors.Func(
+            FieldType.number,
+            extract_value_from_dict("avail_pct"),
+            Projectors.Identity(source, storage_type),
+        ),
+        converter=Converters.round(2),
+    )
+
+
+def _extract_from_dict_and_convert_datetime(key: str):
+    extract_value = extract_value_from_dict(key)
+
+    def extract_and_convert_value(d: dict):
+        dtime: Union[datetime, None] = extract_value(d)
+
+        if dtime is None:
+            return dtime
+
+        return dtime.isoformat()
+
+    return extract_and_convert_value
+
+
+summary_cluster_sheet = Sheet(
+    (
+        Field(
+            "Migrations",
+            Projectors.String("cluster_dict", "migrations_in_progress"),
+            formatters=(
+                Formatters.green_alert(lambda edata: edata.value),
+                Formatters.red_alert(lambda edata: not edata.value),
+            ),
+        ),
+        Field(
+            "Server Version",
+            Projectors.Identity("cluster_dict", "server_version"),
+            converter=Converters.list_to_comma_sep_str,
+        ),
+        Field(
+            "OS Version",
+            Projectors.Identity("cluster_dict", "os_version"),
+            converter=Converters.list_to_comma_sep_str,
+        ),
+        Field(
+            "Cluster Size",
+            Projectors.Identity("cluster_dict", "cluster_size"),
+            converter=Converters.list_to_comma_sep_str,
+        ),
+        # Subgroup(
+        #     "Devices",
+        #     (
+        Field("Devices Total", Projectors.Number("cluster_dict", "device_count")),
+        Field(
+            "Devices Per-Node",
+            Projectors.Number("cluster_dict", "device_count_per_node"),
+        ),
+        Field(
+            "Devices Equal Across Nodes",
+            Projectors.Boolean("cluster_dict", "device_count_same_across_nodes"),
+            formatters=(Formatters.red_alert(lambda edata: not edata.value),),
+        ),
+        # ),
+        # ),
+        # Subgroup(
+        #     "Memory",
+        #     (
+        create_summary_total("cluster_dict", "memory"),
+        create_summary_used("cluster_dict", "memory"),
+        create_summary_used_pct("cluster_dict", "memory"),
+        create_summary_avail("cluster_dict", "memory"),
+        create_summary_avail_pct("cluster_dict", "memory"),
+        # ),
+        # ),
+        # Subgroup(
+        #     "Pmem Index",
+        #     (
+        create_summary_total("cluster_dict", "pmem_index"),
+        create_summary_used("cluster_dict", "pmem_index"),
+        create_summary_used_pct("cluster_dict", "pmem_index"),
+        create_summary_avail("cluster_dict", "pmem_index"),
+        create_summary_avail_pct("cluster_dict", "pmem_index"),
+        #     ),
+        # ),
+        # Subgroup(
+        #     "Flash Index",
+        #     (
+        create_summary_total("cluster_dict", "flash_index"),
+        create_summary_used("cluster_dict", "flash_index"),
+        create_summary_used_pct("cluster_dict", "flash_index"),
+        create_summary_avail("cluster_dict", "flash_index"),
+        create_summary_avail_pct("cluster_dict", "flash_index"),
+        #     ),
+        # ),
+        # Subgroup(
+        #     "Device",
+        #     (
+        create_summary_total("cluster_dict", "device"),
+        create_summary_used("cluster_dict", "device"),
+        create_summary_used_pct("cluster_dict", "device"),
+        create_summary_avail("cluster_dict", "device"),
+        create_summary_avail_pct("cluster_dict", "device"),
+        #     ),
+        # ),
+        # Subgroup(
+        #     "Pmem",
+        #     (
+        create_summary_total("cluster_dict", "pmem"),
+        create_summary_used("cluster_dict", "pmem"),
+        create_summary_used_pct("cluster_dict", "pmem"),
+        create_summary_avail("cluster_dict", "pmem"),
+        create_summary_avail_pct("cluster_dict", "pmem"),
+        #     ),
+        # ),
+        Field(
+            "Replication Factors",
+            Projectors.Func(
+                FieldType.string,
+                lambda v: ",".join(map(str, v)),
+                Projectors.Identity("cluster_dict", "repl_factor"),
+            ),
+            align=FieldAlignment.right,
+        ),
+        Field("Cache Read%", Projectors.Percent("cluster_dict", "cache_read_pct")),
+        Field(
+            "Master Objects",
+            Projectors.Number("cluster_dict", "master_objects"),
+            Converters.scientific_units,
+        ),
+        Field(
+            "Compression Ratio", Projectors.Float("cluster_dict", "compression_ratio")
+        ),
+        Field(
+            "License Usage Latest",
+            Projectors.Func(
+                FieldType.number,
+                extract_value_from_dict("latest"),
+                Projectors.Identity("cluster_dict", "license_data"),
+            ),
+            converter=Converters.byte,
+        ),
+        Field(
+            "License Usage Latest Time",
+            Projectors.Func(
+                FieldType.string,
+                _extract_from_dict_and_convert_datetime("latest_time"),
+                Projectors.Identity("cluster_dict", "license_data"),
+            ),
+            converter=Converters.byte,
+        ),
+        Field(
+            "License Usage Min",
+            Projectors.Func(
+                FieldType.number,
+                extract_value_from_dict("min"),
+                Projectors.Identity("cluster_dict", "license_data"),
+            ),
+            converter=Converters.byte,
+        ),
+        Field(
+            "License Usage Max",
+            Projectors.Func(
+                FieldType.number,
+                extract_value_from_dict("max"),
+                Projectors.Identity("cluster_dict", "license_data"),
+            ),
+            converter=Converters.byte,
+        ),
+        Field(
+            "License Usage Avg",
+            Projectors.Func(
+                FieldType.number,
+                extract_value_from_dict("avg"),
+                Projectors.Identity("cluster_dict", "license_data"),
+            ),
+            converter=Converters.byte,
+        ),
+        # Subgroup(
+        #     "Namespaces",
+        #     (
+        Field("Active", Projectors.Number("cluster_dict", "active_ns")),
+        Field("Total", Projectors.Number("cluster_dict", "ns_count")),
+        #     ),
+        # ),
+        Field(
+            "Active Features",
+            Projectors.Identity("cluster_dict", "active_features"),
+            converter=Converters.list_to_comma_sep_str,
+        ),
+    ),
+    from_source="cluster_dict",
+    default_style=SheetStyle.rows,
+)
+
 summary_namespace_sheet = Sheet(
     (
         Field(
@@ -864,108 +1201,48 @@ summary_namespace_sheet = Sheet(
         Subgroup(
             "Drives",
             (
-                Field("Total", Projectors.Number("ns_stats", "drives_total")),
-                Field("Per-Node", Projectors.Number("ns_stats", "drives_per_node")),
+                Field("Total", Projectors.Number("ns_stats", "devices_total")),
+                Field("Per-Node", Projectors.Number("ns_stats", "devices_per_node")),
             ),
         ),
         Subgroup(
             "Memory",
             (
-                Field(
-                    "Total",
-                    Projectors.Number("ns_stats", "memory_total"),
-                    converter=Converters.byte,
-                ),
-                Field(
-                    "Used%",
-                    Projectors.Float("ns_stats", "memory_used_pct"),
-                    converter=Converters.round(2),
-                ),
-                Field(
-                    "Avail%",
-                    Projectors.Float("ns_stats", "memory_avail_pct"),
-                    converter=Converters.round(2),
-                ),
+                create_summary_total("ns_stats", "memory", subgroup=True),
+                create_summary_used_pct("ns_stats", "memory", subgroup=True),
+                create_summary_avail_pct("ns_stats", "memory", subgroup=True),
             ),
         ),
         Subgroup(
             "Pmem Index",
             (
-                Field(
-                    "Total",
-                    Projectors.Number("ns_stats", "pmem_index_total"),
-                    converter=Converters.byte,
-                ),
-                Field(
-                    "Used%",
-                    Projectors.Float("ns_stats", "pmem_index_used_pct"),
-                    converter=Converters.round(2),
-                ),
-                Field(
-                    "Avail%",
-                    Projectors.Float("ns_stats", "pmem_index_avail_pct"),
-                    converter=Converters.round(2),
-                ),
+                create_summary_total("ns_stats", "pmem_index", subgroup=True),
+                create_summary_used_pct("ns_stats", "pmem_index", subgroup=True),
+                create_summary_avail_pct("ns_stats", "pmem_index", subgroup=True),
             ),
         ),
         Subgroup(
             "Flash Index",
             (
-                Field(
-                    "Total",
-                    Projectors.Number("ns_stats", "flash_index_total"),
-                    converter=Converters.byte,
-                ),
-                Field(
-                    "Used%",
-                    Projectors.Float("ns_stats", "flash_index_used_pct"),
-                    converter=Converters.round(2),
-                ),
-                Field(
-                    "Avail%",
-                    Projectors.Float("ns_stats", "flash_index_avail_pct"),
-                    converter=Converters.round(2),
-                ),
+                create_summary_total("ns_stats", "flash_index", subgroup=True),
+                create_summary_used_pct("ns_stats", "flash_index", subgroup=True),
+                create_summary_avail_pct("ns_stats", "flash_index", subgroup=True),
             ),
         ),
         Subgroup(
             "Device",
             (
-                Field(
-                    "Total",
-                    Projectors.Number("ns_stats", "device_total"),
-                    converter=Converters.byte,
-                ),
-                Field(
-                    "Used%",
-                    Projectors.Float("ns_stats", "device_used_pct"),
-                    converter=Converters.round(2),
-                ),
-                Field(
-                    "Avail%",
-                    Projectors.Float("ns_stats", "device_avail_pct"),
-                    converter=Converters.round(2),
-                ),
+                create_summary_total("ns_stats", "device", subgroup=True),
+                create_summary_used_pct("ns_stats", "device", subgroup=True),
+                create_summary_avail_pct("ns_stats", "device", subgroup=True),
             ),
         ),
         Subgroup(
             "Pmem",
             (
-                Field(
-                    "Total",
-                    Projectors.Number("ns_stats", "pmem_total"),
-                    converter=Converters.byte,
-                ),
-                Field(
-                    "Used%",
-                    Projectors.Float("ns_stats", "pmem_used_pct"),
-                    converter=Converters.round(2),
-                ),
-                Field(
-                    "Avail%",
-                    Projectors.Float("ns_stats", "pmem_avail_pct"),
-                    converter=Converters.round(2),
-                ),
+                create_summary_total("ns_stats", "pmem", subgroup=True),
+                create_summary_used_pct("ns_stats", "pmem", subgroup=True),
+                create_summary_avail_pct("ns_stats", "pmem", subgroup=True),
             ),
         ),
         Field(
@@ -984,6 +1261,56 @@ summary_namespace_sheet = Sheet(
             Converters.scientific_units,
         ),
         Field("Compression Ratio", Projectors.Float("ns_stats", "compression_ratio")),
+        Subgroup(
+            "License Usage",
+            (
+                Field(
+                    "Latest",
+                    Projectors.Func(
+                        FieldType.number,
+                        extract_value_from_dict("latest"),
+                        Projectors.Identity("ns_stats", "license_data"),
+                    ),
+                    converter=Converters.byte,
+                ),
+                Field(
+                    "Latest Time",
+                    Projectors.Func(
+                        FieldType.number,
+                        _extract_from_dict_and_convert_datetime("latest_time"),
+                        Projectors.Identity("ns_stats", "license_data"),
+                    ),
+                    converter=Converters.byte,
+                ),
+                Field(
+                    "Min",
+                    Projectors.Func(
+                        FieldType.number,
+                        extract_value_from_dict("min"),
+                        Projectors.Identity("ns_stats", "license_data"),
+                    ),
+                    converter=Converters.byte,
+                ),
+                Field(
+                    "Max",
+                    Projectors.Func(
+                        FieldType.number,
+                        extract_value_from_dict("max"),
+                        Projectors.Identity("ns_stats", "license_data"),
+                    ),
+                    converter=Converters.byte,
+                ),
+                Field(
+                    "Avg",
+                    Projectors.Func(
+                        FieldType.number,
+                        extract_value_from_dict("avg"),
+                        Projectors.Identity("ns_stats", "license_data"),
+                    ),
+                    converter=Converters.byte,
+                ),
+            ),
+        ),
     ),
     from_source="ns_stats",
     for_each="ns_stats",
@@ -1093,7 +1420,7 @@ show_object_distribution_sheet = Sheet(
 )
 
 
-def latency_weighted_avg(edatas: EntryData):
+def latency_weighted_avg(edatas: list[EntryData]):
     pcts = map(lambda edata: edata.value, edatas)
     ops_sec_values = map(lambda edata: edata.record["ops/sec"], edatas)
     return weighted_avg(pcts, ops_sec_values)
@@ -1141,16 +1468,6 @@ def turn_empty_to_none(ls):
         return None
 
     return ls
-
-
-def extract_value_from_dict(key):
-    def extract_value(dict):
-        if key not in dict:
-            return None
-
-        return dict[key]
-
-    return extract_value
 
 
 show_users = Sheet(
@@ -1315,6 +1632,12 @@ show_sindex = Sheet(
         Field("Bin Type", Projectors.String("data", "type")),
         Field("Index Type", Projectors.String("data", "indextype")),
         Field("State", Projectors.String("data", "state")),
+        Field(
+            "Context",
+            Projectors.Func(
+                "string", _ignore_null, Projectors.String("data", "context")
+            ),
+        ),
     ),
     from_source=("data"),
     group_by=("Namespace", "Set"),

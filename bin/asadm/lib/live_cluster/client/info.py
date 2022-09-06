@@ -64,7 +64,10 @@ logger = logging.getLogger("asadm")
 
 _STRUCT_PROTOCOL_HEADER = struct.Struct("! B B 3H")
 _STRUCT_UINT8 = struct.Struct("! B")
+_STRUCT_UINT16 = struct.Struct("! H")
 _STRUCT_UINT32 = struct.Struct("! I")
+_STRUCT_UINT64 = struct.Struct("! Q")
+_STRUCT_INT64 = struct.Struct("! q")
 _STRUCT_FIELD_HEADER = struct.Struct("! I B")
 _STRUCT_ADMIN_HEADER = struct.Struct("! B B B B 12x")
 
@@ -1306,10 +1309,11 @@ async def info(reader, writer, names=None):
         offset = _pack_info_field(buf, offset, namestr)
 
     rsp_data = await _info_request(reader, writer, buf)
-    rsp_data = util.bytes_to_str(rsp_data)
 
     if rsp_data == -1 or rsp_data is None:
         return -1
+
+    rsp_data = util.bytes_to_str(rsp_data)
 
     # if the original request was a single string, return a single string
     if isinstance(names, str):
@@ -1337,14 +1341,6 @@ async def info(reader, writer, names=None):
                 # this accounts for the trailing '\n' - cheaper than chomp
                 continue
             name, sep, value = line.partition("\t")
-
-            if name not in names:
-                logger.debug(
-                    "Unexpected key %s in info response %s. Exceptable keys: %s",
-                    name,
-                    line,
-                    names,
-                )
 
             rdict[name] = value
         return rdict
