@@ -63,7 +63,7 @@ import types
 if sys.version_info[0] < 3:
     raise Exception("Asloglatency requires Python 3. Use tools package <= 3.27.x for Python 2 support.")
 
-__version__ = '10.2.1'
+__version__ = '11.0.2-rc1'
 
 #===========================================================
 # Constants
@@ -224,7 +224,7 @@ def read_bucket_values(line, file_id):
 		found = 0
 		if HIST_BUCKET_LINE_SUBSTRING in line:
 			for b in range(b_min, all_buckets):
-				pattern = '.*?\(' + bucket_labels[b] + ': (.*?)\).*?'
+				pattern = r'.*?\(' + bucket_labels[b] + r': (.*?)\).*?'
 				r = re.compile(pattern)
 				if r.search(line):
 					found = found + 1
@@ -335,10 +335,10 @@ def read_stat(line, stat=[]):
 	if not stat:
 		return values
 
-	latency_pattern1 = '%s (\d+)'
-	latency_pattern2 = '%s \(([0-9,\s]+)\)'
-	latency_pattern3 = '(\d+)\((\d+)\) %s'
-	latency_pattern4 = '%s \((\d+)'
+	latency_pattern1 = r'%s (\d+)'
+	latency_pattern2 = r'%s \(([0-9,\s]+)\)'
+	latency_pattern3 = r'(\d+)\((\d+)\) %s'
+	latency_pattern4 = r'%s \((\d+)'
 
 	grep_str = stat[-1]
 
@@ -682,8 +682,15 @@ def usage():
 # Print version.
 #
 def print_version():
+	sVersion = __version__.split("-")
+	version = sVersion[0]
+	build = sVersion[-1] if len(sVersion) > 1 else ""
+    
 	print("Aerospike Log Latency Tool")
-	print("Version " + str(__version__))
+	print("Version " + version)
+ 
+	if build:
+		print("Build " + build)
 
 #------------------------------------------------
 # Main function.
