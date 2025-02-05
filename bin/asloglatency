@@ -63,7 +63,7 @@ import types
 if sys.version_info[0] < 3:
     raise Exception("Asloglatency requires Python 3. Use tools package <= 3.27.x for Python 2 support.")
 
-__version__ = '8.5.1'
+__version__ = '10.0.0'
 
 #===========================================================
 # Constants
@@ -483,7 +483,7 @@ def read_hist(hist_tags, after_dt, file_id, line = 0, end_dt=None, before_dt=Non
 
 	# Latency units can change in the middle of a log file.
 	if 'usec' in line:
-		bucket_unit = '\u03bcs'
+		bucket_unit = 'us'
 	elif 'msec' in line:
 		bucket_unit = 'ms'
 
