@@ -63,7 +63,7 @@ import types
 if sys.version_info[0] < 3:
     raise Exception("Asloglatency requires Python 3. Use tools package <= 3.27.x for Python 2 support.")
 
-__version__ = '11.0.2-rc1'
+__version__ = '11.2.0-rc2'
 
 #===========================================================
 # Constants
