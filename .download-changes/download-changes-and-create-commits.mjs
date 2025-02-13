@@ -485,11 +485,13 @@ async function dockerRmImage(version) {
 
 /**
  * @typedef {object} CommandLineOptionsResult
- * @property {!number} `max-count`
+ * @property {number | undefined} `max-count`
+ * @property {string | undefined} `until-version`
  */
 const commandLineOptions = {
   // keys here must not contain special regex characters
   ["max-count"]: {type: "number", default: undefined},
+  ["until-version"]: {type: "string", default: undefined},
 }
 const usage = () => {
   return "Usage: node download-changes-and-create-commits.mjs <OPTIONS>\nOptions:\n" +
@@ -511,7 +513,7 @@ const processOptions = (args) => {
   }
   flagLoop: for (let i = 0; i < args.length; i++) {
     const arg = args[i]
-    if (arg === "--help") {
+    if (arg === "--help" || arg === '-h') {
       console.log(usage())
       process.exit(0)
     }
@@ -546,6 +548,7 @@ async function mainPromise() {
     .map(tag => tag.name)
     .filter(x => x !== "latest")
     .filter(x => mostRecentVersion === undefined || compareVersions(x, mostRecentVersion.version) > 0)
+    .filter(x => options["until-version"] === undefined || compareVersions(x, options["until-version"]) < 0)
     .sort(compareVersions)
   const earliestVersions = versions.slice(0, options["max-count"])
   console.info("versions to download", earliestVersions)

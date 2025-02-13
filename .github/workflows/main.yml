@@ -3,6 +3,9 @@ on:
     # around 7:30am on mondays
     - cron: "27 14 * * 1"
   workflow_dispatch:
+    inputs:
+      until-version:
+        description: 'The version to stop at (not including this one)'
 jobs:
   fetch_new_commits:
     runs-on: ubuntu-20.04
@@ -19,8 +22,9 @@ jobs:
       - uses: actions/setup-node@v2
         with:
           node-version: '14'
-      - run: node .download-changes/download-changes-and-create-commits.mjs
+      - run: node .download-changes/download-changes-and-create-commits.mjs ${UNTIL_VERSION:+--until-version=$UNTIL_VERSION}
         env:
           DOCKER_HUB_TOKEN: ${{ secrets.DOCKER_HUB_TOKEN }}
+          UNTIL_VERSION: ${{ github.event.inputs.until-version }}
       - name: Create Pull Request
         uses: peter-evans/create-pull-request@v3
