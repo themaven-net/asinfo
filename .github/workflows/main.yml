@@ -6,6 +6,9 @@ on:
     inputs:
       until-version:
         description: 'The version to stop at (not including this one)'
+      max-count:
+        type: number
+        description: 'Max number of versions to create'
 jobs:
   fetch_new_commits:
     runs-on: ubuntu-20.04
@@ -22,9 +25,10 @@ jobs:
       - uses: actions/setup-node@v2
         with:
           node-version: '14'
-      - run: node .download-changes/download-changes-and-create-commits.mjs ${UNTIL_VERSION:+--until-version=$UNTIL_VERSION}
+      - run: node .download-changes/download-changes-and-create-commits.mjs ${UNTIL_VERSION:+--until-version=$UNTIL_VERSION} ${MAX_COUNT:+--max-count=$MAX_COUNT}
         env:
           DOCKER_HUB_TOKEN: ${{ secrets.DOCKER_HUB_TOKEN }}
           UNTIL_VERSION: ${{ github.event.inputs.until-version }}
+          MAX_COUNT: ${{ github.event.inputs.max-count }}
       - name: Create Pull Request
         uses: peter-evans/create-pull-request@v3
