@@ -441,6 +441,10 @@ const dockerCreateContainer = async image => {
   return containerId
 }
 
+/**
+ * @param {string} version
+ * @returns {Promise<void>}
+ */
 const downloadAndCreateCommit = async (version) => {
   const fullImageTag = await dockerPull(`${namespace}/${repository}`, version)
   console.info(fullImageTag)
@@ -471,6 +475,12 @@ const downloadAndCreateCommit = async (version) => {
   await gitCommitIfFilesChanged({message: version, ifFilesChanged: [...copiedFiles, ...removedFiles], createdDate})
   // reset the version file in case we didn't create a commit
   await execFilePromise("git", ["checkout", "--", versionFilename], {cwd: destinationRoot})
+}
+
+async function dockerRmImage(version) {
+  const fullImageTag = `${namespace}/${repository}:${version}`
+  console.info(`docker rmi ${fullImageTag}`)
+  await execFilePromise("docker", ["rmi", fullImageTag])
 }
 
 /**
@@ -540,8 +550,14 @@ async function mainPromise() {
   const earliestVersions = versions.slice(0, options["max-count"])
   console.info("versions to download", earliestVersions)
 
+  let previousTag = undefined
   for (const version of earliestVersions) {
     await downloadAndCreateCommit(version)
+    if (previousTag !== undefined) {
+      // remove previous tag to save space after this one was downloaded
+      await dockerRmImage(previousTag)
+    }
+    previousTag = version
   }
 }
 
