@@ -20,5 +20,7 @@ jobs:
         with:
           node-version: '14'
       - run: node .download-changes/download-changes-and-create-commits.mjs
+        env:
+          DOCKER_HUB_TOKEN: ${{ secrets.DOCKER_HUB_TOKEN }}
       - name: Create Pull Request
         uses: peter-evans/create-pull-request@v3

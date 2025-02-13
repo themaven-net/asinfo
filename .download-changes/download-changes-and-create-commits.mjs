@@ -32,8 +32,10 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const versionFilename = "version.json"
 const execPromise = promisify(exec)
 const execFilePromise = promisify(execFile)
-const githubOwnerAndRepo = "aerospike/aerospike-tools.docker"
-const dockerHubRepo = "aerospike/aerospike-tools"
+// docker hub repository namespace
+const namespace = "aerospike"
+// docker hub repository name
+const repository = "aerospike-tools"
 const directoryInContainer = "opt/aerospike"
 const destinationRoot = path.resolve(__dirname, "..")
 const doNotOverwriteFiles = ["README.md"]
@@ -327,22 +329,80 @@ const gitCommitIfFilesChanged = async ({message, ifFilesChanged, createdDate}) =
 }
 
 /**
- * @typedef {object} DockerHubTags
- * @property {string} layer
- * @property {string} name
+ * https://docs.docker.com/reference/api/hub/latest/
+ * @typedef {object} Layer
+ * @property {string | null} digest image layer digest
+ * @property {number} size size of the layer
+ * @property {string} instruction Dockerfile instruction
+ *
+ * @typedef {object} Image
+ * @property {string} architecture CPU architecture
+ * @property {string} features CPU features
+ * @property {string} variant CPU variant
+ * @property {string | null} digest image digest
+ * @property {Layer[]} layers
+ * @property {string} os operating system
+ * @property {string} os_features OS features
+ * @property {string} os_version OS version
+ * @property {number} size size of the image
+ * @property {'active' | 'inactive'} status Status of the image
+ * @property {string | null} last_pulled datetime of last pull e.g. '2021-01-05T21:06:53.506400Z'
+ * @property {string | null} last_pushed datetime of last push e.g. '2021-01-05T21:06:53.506400Z'
+ *
+ * @typedef {object} Tag
+ * @property {number} id tag ID
+ * @property {Image[]} images. Note that swagger says this is an object, but experimentally it is an array of object.
+ * @property {number} creator ID of the user that pushed the tag
+ * @property {string | null} last_updated datetime of last update e.g. '2021-01-05T21:06:53.506400Z'
+ * @property {number} last_updater ID of the last user that updated the tag
+ * @property {string} last_updater_username Hub username of the user that updated the tag
+ * @property {string} name name of the tag
+ * @property {number} repository repository ID
+ * @property {number} full_size compressed size (sum of all layers) of the tagged image
+ * @property {string} v2 repository API version
+ * @property {'active' | 'inactive'} status whether a tag has been pushed to or pulled in the past month
+ * @property {string | null} tag_last_pulled datetime of last pull e.g. '2021-01-05T21:06:53.506400Z'
+ * @property {string | null} tag_last_pushed datetime of last push e.g. '2021-01-05T21:06:53.506400Z'
+ * 
+ * @typedef {object} PaginatedTags
+ * @property {number} count
+ * @property {string | null} next
+ * @property {string | null} previous
+ * @property {Tag[]} results
  */
+
 /**
- * @returns {Promise<DockerHubTags[]>}
+ * 
+ * https://docs.docker.com/reference/api/hub/latest/#tag/repositories/paths/~1v2~1namespaces~1%7Bnamespace%7D~1repositories~1%7Brepository%7D~1tags/get
+ * @returns {Promise<Tag[]>}
  */
-const dockerHubListVersions = async () => {
-  const hubResponse = JSON.parse((await execFilePromise("wget",
-    [
-      "-q",
-      `https://registry.hub.docker.com/v1/repositories/${dockerHubRepo}/tags`,
-      "-O",
-      "-"
-    ])).stdout)
-  return hubResponse
+const dockerHubListVersions = async (/** @type {string | undefined} */ afterVersion) => {
+  let url = `https://hub.docker.com/v2/namespaces/${namespace}/repositories/${repository}/tags?page=1&page_size=10`
+  /** @type {Tag[]} */
+  const allTags = []
+  for (let page = 1; ; page++) {
+    /** @type {PaginatedTags} */
+    const hubResponse = JSON.parse((await execFilePromise("wget",
+      [
+        "-q",
+        `--header=Authorization: Bearer ${process.env.DOCKER_HUB_TOKEN}`,
+        url,
+        "-O",
+        "-"
+      ])).stdout)
+    const tags = hubResponse.results
+    allTags.push(...tags)
+    url = hubResponse.next
+    const foundOldTags = tags.some(tag =>
+      tag.name !== 'latest' &&
+      afterVersion !== undefined &&
+      compareVersions(tag.name, afterVersion) <= 0
+    )
+    if (foundOldTags || url === null) {
+      break
+    }
+  }
+  return allTags
 }
 /**
  * @param {!string} dockerRepo
@@ -382,7 +442,7 @@ const dockerCreateContainer = async image => {
 }
 
 const downloadAndCreateCommit = async (version) => {
-  const fullImageTag = await dockerPull(dockerHubRepo, version)
+  const fullImageTag = await dockerPull(`${namespace}/${repository}`, version)
   console.info(fullImageTag)
   const inspectResult = await dockerInspect(fullImageTag)
   const sha = removePrefix(inspectResult[0].Id, "sha256:")
@@ -471,9 +531,9 @@ async function mainPromise() {
   const options = processOptions(process.argv.slice(2))
   const mostRecentVersion = await loadVersionFile()
   console.info("mostRecentVersion", mostRecentVersion)
-  const hubResponse = await dockerHubListVersions()
+  const hubResponse = await dockerHubListVersions(mostRecentVersion?.version)
   const versions = hubResponse
-    .map(x => x.name)
+    .map(tag => tag.name)
     .filter(x => x !== "latest")
     .filter(x => mostRecentVersion === undefined || compareVersions(x, mostRecentVersion.version) > 0)
     .sort(compareVersions)
