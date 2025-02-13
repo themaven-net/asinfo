@@ -40,6 +40,7 @@ const directoryInContainer = "opt/aerospike"
 const destinationRoot = path.resolve(__dirname, "..")
 const doNotOverwriteFiles = ["README.md"]
 const filenamesToCopyRegardlessOfLicense = ["requirements.txt"]
+const excludePaths = ["bin/asadm"]
 
 
 /**
@@ -232,6 +233,10 @@ async function* copyOpenSourceFiles(source, destination) {
    */
   async function* helper(p) {
     if (p !== undefined && !canOverwritePath(p)) {
+      return
+    }
+    if (excludePaths.includes(p?.replace(path.sep, '/'))) {
+      console.info(`skipping ${p} because it is in excludePaths`)
       return
     }
     const sourceResolved = p === undefined ? source : path.join(source, p)
