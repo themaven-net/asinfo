@@ -11,7 +11,7 @@ on:
         description: 'Max number of versions to create'
 jobs:
   fetch_new_commits:
-    runs-on: ubuntu-20.04
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v2
       - run: |
@@ -24,7 +24,7 @@ jobs:
           git config --local user.email '41898282+github-actions[bot]@users.noreply.github.com'
       - uses: actions/setup-node@v2
         with:
-          node-version: '14'
+          node-version: 'latest'
       - run: node .download-changes/download-changes-and-create-commits.mjs ${UNTIL_VERSION:+--until-version=$UNTIL_VERSION} ${MAX_COUNT:+--max-count=$MAX_COUNT}
         env:
           DOCKER_HUB_TOKEN: ${{ secrets.DOCKER_HUB_TOKEN }}
