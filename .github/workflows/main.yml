@@ -22,7 +22,7 @@ jobs:
           # https://github.community/t/github-actions-bot-email-address/17204/5
           git config --local user.name 'github-actions[bot]'
           git config --local user.email '41898282+github-actions[bot]@users.noreply.github.com'
-      - uses: actions/setup-node@v2
+      - uses: actions/setup-node@v4
         with:
           node-version: 'latest'
       - run: node .download-changes/download-changes-and-create-commits.mjs ${UNTIL_VERSION:+--until-version=$UNTIL_VERSION} ${MAX_COUNT:+--max-count=$MAX_COUNT}
